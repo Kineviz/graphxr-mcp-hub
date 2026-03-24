@@ -3,7 +3,7 @@
  * Converts SQL query results (rows) from Spanner or PostgreSQL into GraphData.
  */
 
-import { GraphData, GraphNode, GraphEdge } from '../graph_schema.js';
+import { GraphData, GraphNode, GraphEdge, Lineage, makeLineage } from '../graph_schema.js';
 
 export interface SpannerTransformConfig {
   nodeCategory?: string;
@@ -11,6 +11,10 @@ export interface SpannerTransformConfig {
   sourceColumn?: string | null;
   targetColumn?: string | null;
   relationship?: string;
+  /**
+   * Lineage metadata for this query (e.g. `{ source: 'spanner', query: 'SELECT ...' }`).
+   */
+  lineage?: Partial<Omit<Lineage, 'fetchedAt'>>;
 }
 
 export function spannerResultToGraph(
@@ -23,12 +27,18 @@ export function spannerResultToGraph(
     sourceColumn = null,
     targetColumn = null,
     relationship = 'RELATED_TO',
+    lineage,
   } = config;
+
+  const resolvedLineage = lineage
+    ? makeLineage(lineage.source ?? 'spanner', { file: lineage.file, query: lineage.query })
+    : undefined;
 
   const nodes: GraphNode[] = rows.map((row, i) => ({
     id: String(row[idColumn] ?? `node_${i}`),
     category: nodeCategory,
     properties: row,
+    ...(resolvedLineage && { _lineage: resolvedLineage }),
   }));
 
   const edges: GraphEdge[] =
@@ -41,6 +51,7 @@ export function spannerResultToGraph(
             target: String(row[targetColumn!]),
             relationship,
             properties: {},
+            ...(resolvedLineage && { _lineage: resolvedLineage }),
           }))
       : [];
 

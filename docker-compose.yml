@@ -1,0 +1,68 @@
+# docker-compose.yml — GraphXR MCP Hub one-click startup
+#
+# Services:
+#   graphxr-mcp   — GraphXR MCP Server (Node.js, port 8899)
+#   genai-toolbox — Google genai-toolbox (Go, port 5000) for database sources
+#
+# Usage:
+#   docker-compose up                    # start all services
+#   docker-compose up graphxr-mcp        # start only the MCP server
+#   docker-compose up -d                 # detached mode
+#   docker-compose down                  # stop and remove containers
+
+version: '3.9'
+
+services:
+  # ── GraphXR MCP Server ───────────────────────────────────────────────────
+  graphxr-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: graphxr-mcp-server
+    ports:
+      - "${GRAPHXR_MCP_PORT:-8899}:8899"
+    environment:
+      - GRAPHXR_MCP_PORT=8899
+      - GRAPHXR_WS_URL=${GRAPHXR_WS_URL:-ws://host.docker.internal:8080}
+      - MCP_TRANSPORT=http
+    volumes:
+      - ./data:/app/data:ro
+      - ./config:/app/config:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8899/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Allow the container to reach the host machine where GraphXR WebGL runs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ── Google genai-toolbox (database MCP sources) ─────────────────────────
+  # Only needed if you want Neo4j / Spanner / PostgreSQL / BigQuery sources.
+  # Set toolbox.enabled=true in config/hub_config.yaml to activate.
+  genai-toolbox:
+    image: gcr.io/cloud-toolbox/genai-toolbox:latest
+    container_name: genai-toolbox
+    profiles:
+      - databases          # only started with: docker-compose --profile databases up
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./config/tools.yaml:/app/tools.yaml:ro
+    environment:
+      - NEO4J_URI=${NEO4J_URI:-bolt://host.docker.internal:7687}
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - GCP_PROJECT=${GCP_PROJECT}
+      - SPANNER_INSTANCE=${SPANNER_INSTANCE}
+      - SPANNER_DATABASE=${SPANNER_DATABASE}
+      - POSTGRES_HOST=${POSTGRES_HOST:-host.docker.internal}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

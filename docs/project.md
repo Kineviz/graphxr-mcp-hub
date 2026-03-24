@@ -676,16 +676,105 @@ npm run build
 
 - [x] GraphXR MCP Server 完整实现（Node.js/TypeScript，端口 8899）
 - [x] 自动发现端点（/health + /mcp-info）
-- [x] SSE + STDIO 双传输模式
+- [x] SSE + STDIO 双传输模式，多客户端并发支持（session 管理修复）
 - [x] 统一图语义层（Zod Schema + 数据转换器）
-- [ ] GraphXR Agent 前端接入自动发现逻辑
-- [ ] DuckDB MCP 集成测试（CSV/JSON/Parquet → GraphXR）
-- [ ] Docker Compose 一键启动（genai-toolbox + graphxr-mcp-server）
+- [x] 数据血缘追踪（`_lineage` 字段，记录数据源/文件/查询/时间戳）
+- [x] GraphXR Agent 前端自动发现模块（`mcp_client/discovery.ts`，纯 Web API）
+- [x] MCP Hub Client（`mcp_client/hub.ts`，多服务器连接管理器）
+- [x] DuckDB MCP 集成测试（CSV/JSON/Parquet → GraphData → GraphXR）
+- [x] Docker Compose 一键启动（Dockerfile + docker-compose.yml）
 - [ ] 支持实时流数据源（Kafka WebSocket MCP）
-- [ ] 数据血缘追踪（从哪个数据源、哪个文件来的节点）
-- [ ] 多客户端协作：多个 LLM 客户端共享同一 MCP Server
 - [ ] Web 管理 UI（可视化配置 hub_config.yaml）
 - [ ] 支持更多 LLM 后端（Ollama 本地模型）
+
+---
+
+## 14. 数据血缘追踪（Data Lineage）
+
+每个 `GraphNode` 和 `GraphEdge` 都携带可选的 `_lineage` 字段，记录数据来源：
+
+```typescript
+interface Lineage {
+  source: string;    // 数据源名称，如 "duckdb", "neo4j", "http-api"
+  file?: string;     // 文件路径或 URL，如 "/data/users.csv"
+  query?: string;    // 产生此数据的查询，如 SQL、Cypher
+  fetchedAt: string; // ISO 8601 时间戳
+}
+```
+
+在所有数据转换器中通过 `lineage` 配置项传入：
+
+```typescript
+// CSV → GraphXR（附带血缘信息）
+const graph = csvResultToGraph(rows, {
+  nodeCategory: 'User',
+  idColumn: 'id',
+  lineage: {
+    source: 'duckdb',
+    file: '/data/users.csv',
+    query: "SELECT * FROM read_csv_auto('/data/users.csv')",
+  },
+});
+// graph.nodes[0]._lineage === { source: 'duckdb', file: '...', fetchedAt: '2026-...' }
+```
+
+血缘信息在 GraphXR 中可作为节点/边的元属性展示，方便追踪"这个节点是从哪来的"。
+
+---
+
+## 15. MCP Hub Client（多服务器连接管理）
+
+`mcp_client/hub.ts` 读取 `config/hub_config.yaml`，管理所有已启用数据源的连接：
+
+```typescript
+import { McpHub } from './mcp_client/hub.js';
+
+const hub = new McpHub();          // 默认读取 config/hub_config.yaml
+await hub.start();                 // 启动所有 enabled STDIO 子进程
+
+console.log(hub.listServers());    // ['duckdb', 'toolbox', 'filesystem', ...]
+console.log(hub.getSseUrl('toolbox')); // 'http://localhost:5000/sse'
+console.log(hub.listAllTools());   // 汇总所有服务器的工具列表
+
+await hub.stop();                  // 终止所有子进程
+```
+
+---
+
+## 16. GraphXR Agent 前端自动发现
+
+`mcp_client/discovery.ts` 提供纯 Web API 实现，可直接嵌入 GraphXR Agent 前端 bundle：
+
+```typescript
+import { GraphXRMcpDiscovery } from './mcp_client/discovery.js';
+
+const discovery = new GraphXRMcpDiscovery({ port: 8899 });
+
+// 监听状态变化，驱动 UI（例如显示/隐藏连接按钮）
+discovery.onStatusChange((status, info) => {
+  if (status === 'available') {
+    showConnectButton(info!.tools);
+  } else if (status === 'connected') {
+    showConnectedBadge();
+  } else if (status === 'unavailable') {
+    hideConnectionUI();
+  }
+});
+
+// 开始后台轮询（每 10s 检测一次）
+await discovery.startPolling();
+
+// 用户点击连接按钮时
+onUserClickConnect(() => discovery.connect());
+```
+
+**状态机：**
+
+```
+idle → probing → available → connecting → connected
+                           ↘ (server gone) → disconnected → probing
+                ↘ unavailable
+```
 
 ---
 
@@ -701,4 +790,4 @@ npm run build
 
 ---
 
-*文档版本：v1.0.0 | 更新日期：2026-03-24 | 维护团队：Kineviz*
+*文档版本：v1.1.0 | 更新日期：2026-03-24 | 维护团队：Kineviz*

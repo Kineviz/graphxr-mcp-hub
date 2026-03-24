@@ -3,7 +3,7 @@
  * Converts tabular query results (from DuckDB MCP Server) into GraphData.
  */
 
-import { GraphData, GraphNode, GraphEdge } from '../graph_schema.js';
+import { GraphData, GraphNode, GraphEdge, Lineage, makeLineage } from '../graph_schema.js';
 
 export interface CsvTransformConfig {
   /** Category label for each row-node (e.g. "User", "Product"). */
@@ -14,6 +14,11 @@ export interface CsvTransformConfig {
   targetColumn?: string | null;
   /** Relationship label for edges created from targetColumn. */
   relationship?: string;
+  /**
+   * Lineage metadata — which file / query produced this data.
+   * Pass at minimum `{ source: 'duckdb', file: '/data/users.csv' }`.
+   */
+  lineage?: Partial<Omit<Lineage, 'fetchedAt'>>;
 }
 
 export function csvResultToGraph(
@@ -25,12 +30,18 @@ export function csvResultToGraph(
     idColumn = 'id',
     targetColumn = null,
     relationship = 'RELATED_TO',
+    lineage,
   } = config;
+
+  const resolvedLineage = lineage
+    ? makeLineage(lineage.source ?? 'duckdb', { file: lineage.file, query: lineage.query })
+    : undefined;
 
   const nodes: GraphNode[] = rows.map((row) => ({
     id: String(row[idColumn] ?? Math.random()),
     category: nodeCategory,
     properties: row,
+    ...(resolvedLineage && { _lineage: resolvedLineage }),
   }));
 
   const edges: GraphEdge[] = targetColumn
@@ -42,6 +53,7 @@ export function csvResultToGraph(
           target: String(row[targetColumn]),
           relationship,
           properties: {},
+          ...(resolvedLineage && { _lineage: resolvedLineage }),
         }))
     : [];
 

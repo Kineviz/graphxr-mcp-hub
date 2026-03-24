@@ -151,19 +151,24 @@ async function startHttpMode(): Promise<void> {
   // Each GET /sse request creates a dedicated MCP Server + transport pair so
   // that multiple clients (GraphXR Agent, Claude, Codex…) can connect
   // independently and concurrently.
+  const sseTransports = new Map<string, SSEServerTransport>();
+
   app.get('/sse', async (req, res) => {
     const server = createMcpServer();
     const transport = new SSEServerTransport('/messages', res);
     await server.connect(transport);
 
+    // Register this transport so POST /messages can route to it
+    sseTransports.set(transport.sessionId, transport);
+
     // Clean up when the client disconnects
     req.on('close', () => {
+      sseTransports.delete(transport.sessionId);
       server.close().catch(() => {});
     });
   });
 
   // POST /messages — SSE response channel (required by MCP SSE transport)
-  const sseTransports = new Map<string, SSEServerTransport>();
   app.post('/messages', async (req, res) => {
     const sessionId = req.query['sessionId'] as string;
     const transport = sseTransports.get(sessionId);
