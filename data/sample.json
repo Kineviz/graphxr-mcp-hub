@@ -1,0 +1,5 @@
+[
+  { "id": "p1", "title": "GraphXR Overview", "author": "Alice", "tags": ["graph", "viz"], "related": "p2" },
+  { "id": "p2", "title": "MCP Protocol Guide", "author": "Bob", "tags": ["mcp", "protocol"], "related": "p3" },
+  { "id": "p3", "title": "Neo4j Best Practices", "author": "Carol", "tags": ["neo4j", "graph"], "related": "p1" }
+]
