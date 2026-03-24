@@ -1,0 +1,6 @@
+id,name,age,city,friend_id
+1,Alice,30,New York,2
+2,Bob,25,San Francisco,3
+3,Carol,35,Chicago,1
+4,Dave,28,New York,1
+5,Eve,32,Los Angeles,2
