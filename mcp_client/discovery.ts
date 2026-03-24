@@ -241,9 +241,9 @@ export class GraphXRMcpDiscovery {
 
   private async fetchWithTimeout(url: string): Promise<Response> {
     const controller = new AbortController();
-    // Set a timeout: if the request takes longer than probeTimeoutMs,
-    // abort it so we don't block the polling loop indefinitely.
-    // The timer is always cleared in `finally` so it never fires after resolution.
+    // Set a timeout so the polling loop is never blocked indefinitely.
+    // If the fetch completes before the timeout, the finally block clears
+    // the timer so the abort signal is never triggered after resolution.
     const timer = setTimeout(() => controller.abort(), this.probeTimeoutMs);
     try {
       return await fetch(url, { signal: controller.signal });

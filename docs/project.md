@@ -683,9 +683,9 @@ npm run build
 - [x] MCP Hub Client（`mcp_client/hub.ts`，多服务器连接管理器）
 - [x] DuckDB MCP 集成测试（CSV/JSON/Parquet → GraphData → GraphXR）
 - [x] Docker Compose 一键启动（Dockerfile + docker-compose.yml）
-- [ ] 支持实时流数据源（Kafka WebSocket MCP）
-- [ ] Web 管理 UI（可视化配置 hub_config.yaml）
-- [ ] 支持更多 LLM 后端（Ollama 本地模型）
+- [x] 支持实时流数据源（Kafka WebSocket MCP — `streaming/` 模块 + `stream_subscribe` 工具）
+- [x] Web 管理 UI（GET /admin — 可视化 hub_config.yaml + 实时流监控）
+- [x] 支持更多 LLM 后端（Ollama 本地模型 — `mcp_client/ollama_client.ts`）
 
 ---
 
@@ -778,6 +778,142 @@ idle → probing → available → connecting → connected
 
 ---
 
+## 17. 实时流数据源（Kafka / WebSocket）
+
+### 架构
+
+```
+Kafka → WebSocket Bridge (e.g. Redpanda Console)
+           │  ws://localhost:9092/topics/graph-events
+           ▼
+  WebSocketStreamAdapter
+    - 自动重连（autoReconnect: true）
+    - 每条消息调用 buildKafkaTransform() 转为 GraphData
+           │
+           ▼
+  StreamManager.handleEvent()
+    - incremental 模式 → graphxrClient.addNodes() + addEdges()
+    - replace 模式    → graphxrClient.pushGraph()
+           │
+           ▼
+  GraphXR WebGL（实时增量渲染）
+```
+
+### 通过 MCP 工具订阅流
+
+```typescript
+// 通过 Claude / Codex / GraphXR Agent 发起订阅
+// tool: stream_subscribe
+{
+  "url": "ws://localhost:9092/topics/user-events",
+  "name": "user-activity",
+  "mode": "incremental",
+  "transform": {
+    "nodeCategory": "UserEvent",
+    "idField": "event_id",
+    "targetField": "user_id",
+    "relationship": "TRIGGERED_BY"
+  }
+}
+// 返回: { "subscriptionId": "stream_1", "status": "connecting" }
+
+// 查看所有活跃流
+// tool: stream_list
+
+// 停止流订阅
+// tool: stream_unsubscribe  { "id": "stream_1" }
+```
+
+### Kafka 消息格式
+
+```json
+{
+  "key": "user-123",
+  "value": { "event_id": "e001", "user_id": "user-123", "action": "click" },
+  "topic": "user-events",
+  "offset": 4200
+}
+```
+
+节点和边将携带血缘信息：`_lineage.source = "user-activity"`, `_lineage.file = "user-events"`, `_lineage.query = "offset:4200"`。
+
+---
+
+## 18. Web 管理 UI
+
+启动 MCP Server 后，访问 `http://localhost:8899/admin`。
+
+**功能：**
+- 服务器状态（MCP Server 运行情况、GraphXR WebSocket 连接状态）
+- 全量工具列表（所有 MCP 工具的 badge 展示）
+- 数据源面板（读取 hub_config.yaml，实时开关 enabled/disabled）
+- 活跃流订阅表（ID、状态、消息数、模式，可停止）
+
+**API 端点：**
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/admin` | HTML 管理界面 |
+| `GET` | `/admin/config` | 返回当前 hub_config.yaml 内容（JSON） |
+| `PATCH` | `/admin/config` | 切换某个服务器的 enabled 状态 |
+| `GET` | `/admin/streams` | 列出所有活跃的流订阅 |
+
+```bash
+# 通过 API 禁用 duckdb
+curl -X PATCH http://localhost:8899/admin/config \
+  -H 'Content-Type: application/json' \
+  -d '{"server":"duckdb","enabled":false}'
+
+# 查看活跃流订阅
+curl http://localhost:8899/admin/streams
+```
+
+---
+
+## 19. Ollama 本地模型支持
+
+`mcp_client/ollama_client.ts` 将 Ollama 与 GraphXR MCP Server 桥接：
+
+```typescript
+import { OllamaMcpClient } from './mcp_client/ollama_client.js';
+
+const client = new OllamaMcpClient({
+  ollamaUrl: 'http://localhost:11434',
+  model: 'llama3.2',              // 也支持 mistral、qwen2.5、codellama 等
+  mcpServerUrl: 'http://localhost:8899',
+});
+
+// 一次对话（自动调用 MCP 工具）
+const reply = await client.chat('把 data/users.csv 的用户关系图推送到 GraphXR');
+console.log(reply);
+// → "已将 3 个 User 节点和 2 条 KNOWS 关系推送到 GraphXR。"
+```
+
+**工作原理：**
+1. 从 `/mcp-info` 获取所有 MCP 工具定义
+2. 将 MCP JSON Schema 转为 Ollama function calling 格式
+3. 发送 `/api/chat`（Ollama 的 OpenAI 兼容接口）
+4. 当 Ollama 请求调用工具时，代理到 MCP Server `/messages`
+5. 将工具结果返回 Ollama，继续对话直到产生最终回答
+
+**在 `hub_config.yaml` 中启用：**
+
+```yaml
+llm_backends:
+  ollama:
+    enabled: true
+    url: http://localhost:11434
+    model: llama3.2
+```
+
+**支持的 Ollama 模型（支持 function calling）：**
+- `llama3.2` / `llama3.1`（推荐）
+- `qwen2.5` / `qwen2.5-coder`
+- `mistral`
+- `command-r` / `command-r-plus`
+
+---
+
 ## 参考资料
 
 - [googleapis/genai-toolbox GitHub](https://github.com/googleapis/genai-toolbox)
@@ -790,4 +926,4 @@ idle → probing → available → connecting → connected
 
 ---
 
-*文档版本：v1.1.0 | 更新日期：2026-03-24 | 维护团队：Kineviz*
+*文档版本：v1.2.0 | 更新日期：2026-03-24 | 维护团队：Kineviz*

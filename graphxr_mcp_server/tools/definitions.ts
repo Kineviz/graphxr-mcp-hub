@@ -183,4 +183,67 @@ export const ALL_TOOL_DEFINITIONS: Tool[] = [
       required: ['node_id'],
     },
   },
+
+  // ── Streaming direction (WebSocket / Kafka → GraphXR) ──────────────────
+
+  {
+    name: 'stream_subscribe',
+    description:
+      'Subscribe to a real-time streaming data source (WebSocket or Kafka-over-WebSocket) ' +
+      'and push incremental graph updates to GraphXR as messages arrive. ' +
+      'Returns a subscription ID. Use stream_unsubscribe to stop.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: 'WebSocket URL of the streaming source, e.g. "ws://localhost:9092/topics/events".',
+        },
+        name: {
+          type: 'string',
+          description: 'Human-readable name for this stream (used in lineage metadata). Defaults to "kafka-stream".',
+        },
+        mode: {
+          type: 'string',
+          enum: ['incremental', 'replace'],
+          description:
+            '"incremental" (default) appends new nodes/edges to the existing graph. ' +
+            '"replace" replaces the entire graph with each incoming message.',
+        },
+        transform: {
+          type: 'object',
+          description: 'Optional Kafka message transform config.',
+          properties: {
+            nodeCategory: { type: 'string', description: 'Category for created nodes. Defaults to "KafkaEvent".' },
+            idField: { type: 'string', description: 'Message value field used as node id. Defaults to "id".' },
+            targetField: { type: 'string', description: 'Field pointing to a target node id (creates edges).' },
+            relationship: { type: 'string', description: 'Relationship label for edges. Defaults to "RELATED_TO".' },
+          },
+        },
+      },
+      required: ['url'],
+    },
+  },
+
+  {
+    name: 'stream_unsubscribe',
+    description: 'Stop a running stream subscription by its subscription ID.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The subscription ID returned by stream_subscribe.' },
+      },
+      required: ['id'],
+    },
+  },
+
+  {
+    name: 'stream_list',
+    description: 'List all active stream subscriptions with their status and message counts.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
 ];

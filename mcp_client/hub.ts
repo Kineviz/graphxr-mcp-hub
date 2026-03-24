@@ -203,10 +203,12 @@ export class McpHub {
     });
 
     child.on('exit', (code) => {
-      if (code !== 0 && code !== null) {
+      if (code === null) {
+        console.warn(`[hub] Stdio server "${name}" was terminated by a signal`);
+      } else if (code !== 0) {
         console.error(`[hub] Stdio server "${name}" exited with non-zero code ${code}`);
       } else {
-        console.warn(`[hub] Stdio server "${name}" exited with code ${code}`);
+        console.warn(`[hub] Stdio server "${name}" exited with code 0`);
       }
       this.stdioHandles.delete(name);
     });

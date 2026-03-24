@@ -145,6 +145,35 @@ GraphXR Agent 的 chat 页面在启动时会自动探测 `localhost:8899`：
 | `get_edges(filter?)` | 按条件查询当前图中的边 |
 | `find_neighbors(node_id)` | 查询指定节点的邻居节点和边 |
 
+### 实时流（Kafka / WebSocket → GraphXR WebGL）
+
+| 工具 | 说明 |
+|---|---|
+| `stream_subscribe(url, name?, mode?, transform?)` | 订阅 WebSocket/Kafka 流，返回 subscriptionId |
+| `stream_unsubscribe(id)` | 停止指定流订阅 |
+| `stream_list()` | 列出所有活跃流订阅及其状态 |
+
+---
+
+## Web 管理 UI
+
+启动服务后访问 `http://localhost:8899/admin`：
+
+- **服务器状态**：MCP Server 运行情况 + GraphXR WebSocket 状态
+- **数据源开关**：读取 hub_config.yaml，点击切换 enabled/disabled
+- **工具清单**：全部 12 个 MCP 工具的 badge 一览
+- **流订阅监控**：活跃流的 ID、状态、消息计数
+
+```bash
+# API: 禁用 duckdb
+curl -X PATCH http://localhost:8899/admin/config \
+  -H 'Content-Type: application/json' \
+  -d '{"server":"duckdb","enabled":false}'
+
+# API: 查看活跃流
+curl http://localhost:8899/admin/streams
+```
+
 ---
 
 ## 可选数据源扩展
@@ -190,6 +219,21 @@ const graph = csvResultToGraph(rows, {
 
 ---
 
+## 实时流数据（Kafka / WebSocket）
+
+```typescript
+// 通过 MCP stream_subscribe 工具订阅 Kafka topic
+// 消息自动增量推送到 GraphXR WebGL
+{
+  "url": "ws://localhost:9092/topics/events",
+  "name": "event-stream",
+  "mode": "incremental",
+  "transform": { "nodeCategory": "Event", "idField": "event_id" }
+}
+```
+
+---
+
 ## GraphXR Agent 前端自动发现
 
 在 GraphXR Agent 前端 bundle 中嵌入：
@@ -204,6 +248,19 @@ discovery.onStatusChange((status, info) => {
 });
 await discovery.startPolling();
 ```
+
+---
+
+## Ollama 本地 LLM
+
+```typescript
+import { OllamaMcpClient } from './mcp_client/ollama_client.js';
+
+const client = new OllamaMcpClient({ model: 'llama3.2', mcpServerUrl: 'http://localhost:8899' });
+const reply = await client.chat('把 data/users.csv 的用户关系图推送到 GraphXR');
+```
+
+无外网环境下使用本地模型驱动 GraphXR Agent，支持 llama3.2、mistral、qwen2.5 等支持 function calling 的模型。
 
 ---
 
@@ -234,6 +291,14 @@ MCP Client
   └─► graphxr.add_edges(new_edges)             → 增量追加到现有图 ✅
 ```
 
+### 示例 C：Kafka 实时事件流 → GraphXR
+
+```
+stream_subscribe("ws://kafka-bridge:9092/topics/user-logins", mode="incremental")
+  → 每条 Kafka 消息 → GraphData.nodes → graphxr.addNodes()
+  → GraphXR WebGL 实时展示用户登录事件节点 ✅
+```
+
 ---
 
 ## 开发
@@ -241,7 +306,7 @@ MCP Client
 ```bash
 npm run build       # TypeScript 编译
 npm run typecheck   # 类型检查
-npm test            # 运行所有测试（Vitest）— 60 tests
+npm test            # 运行所有测试（Vitest）— 102 tests
 npm run lint        # ESLint
 ```
 
@@ -252,32 +317,32 @@ npm run lint        # ESLint
 ```
 graphxr-mcp-hub/
 ├── graphxr_mcp_server/
-│   ├── index.ts              # MCP Server 入口（端口 8899，SSE + STDIO，多客户端 session 管理）
+│   ├── index.ts              # MCP Server 入口（端口 8899，SSE + STDIO + Admin UI）
 │   ├── graphxr_client.ts     # GraphXR WebSocket 桥接客户端
 │   └── tools/
-│       ├── definitions.ts    # 所有工具的 MCP 定义（含 /mcp-info 清单）
-│       ├── push_graph.ts
-│       ├── add_nodes.ts
-│       ├── add_edges.ts
-│       ├── update_node.ts
-│       ├── clear_graph.ts
-│       ├── get_graph_state.ts
-│       ├── get_nodes.ts
-│       ├── get_edges.ts
-│       └── find_neighbors.ts
+│       ├── definitions.ts    # 全部 12 个 MCP 工具定义
+│       ├── push_graph.ts / add_nodes.ts / add_edges.ts / update_node.ts
+│       ├── clear_graph.ts / get_graph_state.ts / get_nodes.ts / get_edges.ts
+│       ├── find_neighbors.ts
+│       ├── stream_subscribe.ts  # Kafka/WebSocket 流订阅工具
+│       └── stream_tools.ts      # stream_unsubscribe + stream_list 工具
+├── streaming/
+│   ├── stream_adapter.ts     # 抽象流适配器基类
+│   ├── websocket_stream.ts   # WebSocket/Kafka-over-WS 流适配器
+│   └── stream_manager.ts     # 流订阅注册表 + GraphXR 数据推送
 ├── semantic_layer/
 │   ├── graph_schema.ts       # 统一图语义类型（Zod + TypeScript + 血缘追踪）
 │   ├── validators.ts
 │   └── transformers/
-│       ├── csv_transformer.ts   # 支持 lineage
-│       ├── json_transformer.ts  # 支持 lineage
-│       ├── neo4j_transformer.ts # 支持 lineage
-│       └── spanner_transformer.ts # 支持 lineage
+│       ├── csv_transformer.ts / json_transformer.ts
+│       ├── neo4j_transformer.ts / spanner_transformer.ts
+│       └── kafka_transformer.ts  # Kafka 消息 → GraphData 转换器
 ├── mcp_client/
 │   ├── hub.ts                # MCP Hub Client — 多服务器连接管理器
-│   └── discovery.ts          # GraphXR Agent 前端自动发现模块（纯 Web API）
+│   ├── discovery.ts          # GraphXR Agent 前端自动发现模块（纯 Web API）
+│   └── ollama_client.ts      # Ollama 本地 LLM ↔ MCP 桥接客户端
 ├── config/
-│   ├── hub_config.yaml       # 总控配置（端口 8899、数据源开关）
+│   ├── hub_config.yaml       # 总控配置（端口、数据源、流、LLM 后端）
 │   └── tools.yaml            # genai-toolbox 数据库配置
 ├── data/
 │   ├── sample.csv
@@ -288,9 +353,13 @@ graphxr-mcp-hub/
 │   ├── test_lineage.ts          # 血缘追踪测试（12）
 │   ├── test_duckdb_pipeline.ts  # DuckDB 流水线集成测试（8）
 │   ├── test_hub.ts              # Hub Client 测试（15）
-│   └── test_discovery.ts        # 自动发现客户端测试（8）
+│   ├── test_discovery.ts        # 自动发现客户端测试（8）
+│   ├── test_kafka_transformer.ts # Kafka 消息转换器测试（11）
+│   ├── test_streaming.ts        # 流适配器 + StreamManager 测试（14）
+│   ├── test_ollama_client.ts    # Ollama MCP 桥接客户端测试（8）
+│   └── test_admin_ui.ts         # Admin UI API 配置管理测试（9）
 ├── docs/
-│   └── project.md            # 详细项目方案文档（v1.1.0）
+│   └── project.md            # 详细项目方案文档（v1.2.0）
 ├── Dockerfile
 ├── docker-compose.yml
 ├── .env.example
@@ -301,4 +370,4 @@ graphxr-mcp-hub/
 
 ---
 
-*版本：v1.1.0 | 维护团队：Kineviz*
+*版本：v1.2.0 | 维护团队：Kineviz*

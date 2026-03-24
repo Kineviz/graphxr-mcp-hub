@@ -53,3 +53,41 @@ mcp_servers:
     env:
       GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
     description: "GitHub 代码仓库访问"
+
+# ── D. 实时流数据源（Kafka / WebSocket）─────────────────────────────────────
+# 启用后，LLM 可通过 stream_subscribe MCP 工具订阅实时 Kafka topic，
+# 消息会增量推送到 GraphXR WebGL 画布。
+streaming:
+  enabled: false
+  sources:
+    - name: kafka-events
+      enabled: false
+      url: "${KAFKA_WS_URL:-ws://localhost:9092/topics/graph-events}"
+      mode: incremental           # incremental | replace
+      transform:
+        nodeCategory: KafkaEvent
+        idField: id
+        targetField: null
+        relationship: RELATED_TO
+      description: "Kafka graph-events topic（通过 WebSocket bridge 接入）"
+
+    - name: realtime-metrics
+      enabled: false
+      url: "${METRICS_WS_URL:-ws://localhost:9093/topics/metrics}"
+      mode: replace
+      transform:
+        nodeCategory: Metric
+        idField: metric_id
+      description: "实时指标流（每条消息替换整图）"
+
+# ── E. LLM 后端（可选，默认使用已连接的 MCP 客户端如 Claude / Codex）────────
+# 配置 Ollama 后，可在无外网环境下用本地模型驱动 GraphXR Agent。
+llm_backends:
+  ollama:
+    enabled: false
+    url: "${OLLAMA_URL:-http://localhost:11434}"
+    model: "${OLLAMA_MODEL:-llama3.2}"
+    description: "Ollama 本地模型（llama3、mistral、qwen2.5 等）"
+    # 可选：系统提示词覆盖
+    # system_prompt: "你是 GraphXR 助手，可以操作知识图谱…"
+
