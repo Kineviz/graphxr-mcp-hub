@@ -3,7 +3,7 @@
  * Converts SQL query results (rows) from Spanner or PostgreSQL into GraphData.
  */
 
-import { GraphData, GraphNode, GraphEdge } from '../graph_schema.js';
+import { GraphData, GraphNode, GraphEdge } from '../graph_schema';
 
 export interface SpannerTransformConfig {
   nodeCategory?: string;

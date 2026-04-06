@@ -3,10 +3,10 @@
  * Returns a summary of the graph currently displayed in GraphXR.
  */
 
-import { GraphXRClient } from '../graphxr_client.js';
+import { IGraphXRClient } from '../graphxr_bridge';
 
 export async function getGraphState(
-  client: GraphXRClient,
+  client: IGraphXRClient,
   _args: unknown
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const state = await client.getGraphState();

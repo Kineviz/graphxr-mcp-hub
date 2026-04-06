@@ -4,7 +4,7 @@
  */
 
 import { z } from 'zod';
-import { GraphXRClient } from '../graphxr_client.js';
+import { IGraphXRClient } from '../graphxr_bridge';
 
 const UpdateNodeArgsSchema = z.object({
   id: z.string(),
@@ -12,7 +12,7 @@ const UpdateNodeArgsSchema = z.object({
 });
 
 export async function updateNode(
-  client: GraphXRClient,
+  client: IGraphXRClient,
   args: unknown
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const { id, properties } = UpdateNodeArgsSchema.parse(args);

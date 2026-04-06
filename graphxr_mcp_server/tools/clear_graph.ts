@@ -3,10 +3,10 @@
  * Removes all nodes and edges from the GraphXR canvas.
  */
 
-import { GraphXRClient } from '../graphxr_client.js';
+import { IGraphXRClient } from '../graphxr_bridge';
 
 export async function clearGraph(
-  client: GraphXRClient,
+  client: IGraphXRClient,
   _args: unknown
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   await client.clearGraph();

@@ -3,7 +3,7 @@
  * Converts tabular query results (from DuckDB MCP Server) into GraphData.
  */
 
-import { GraphData, GraphNode, GraphEdge } from '../graph_schema.js';
+import { GraphData, GraphNode, GraphEdge } from '../graph_schema';
 
 export interface CsvTransformConfig {
   /** Category label for each row-node (e.g. "User", "Product"). */

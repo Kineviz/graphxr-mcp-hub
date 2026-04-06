@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GraphXR MCP Hub — Integration Demo</title>
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+      --green: #3fb950; --red: #f85149; --yellow: #d29922; --purple: #bc8cff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+           background: var(--bg); color: var(--text); padding: 24px; line-height: 1.6; }
+    h1 { font-size: 1.4rem; margin-bottom: 4px; }
+    .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 24px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .card h2 { font-size: 1rem; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+    .badge.ok { background: rgba(63,185,80,.15); color: var(--green); }
+    .badge.err { background: rgba(248,81,73,.15); color: var(--red); }
+    .badge.wait { background: rgba(210,153,34,.15); color: var(--yellow); }
+    .badge.purple { background: rgba(188,140,255,.15); color: var(--purple); }
+    pre { background: #0d1117; border: 1px solid var(--border); border-radius: 6px;
+          padding: 12px; font-size: 0.8rem; overflow: auto; max-height: 240px; white-space: pre-wrap; }
+    button { background: var(--accent); color: #fff; border: none; border-radius: 6px;
+             padding: 8px 16px; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+    button:hover { opacity: .85; }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .btn-secondary { background: var(--surface); border: 1px solid var(--border); color: var(--text); }
+    .btn-purple { background: rgba(188,140,255,.15); border: 1px solid rgba(188,140,255,.35); color: var(--purple); }
+    .tool-chip { display: inline-block; background: rgba(88,166,255,.1); color: var(--accent);
+                 border: 1px solid rgba(88,166,255,.25); border-radius: 4px;
+                 padding: 2px 8px; font-size: 0.75rem; margin: 2px; }
+    .log { font-size: 0.78rem; color: var(--muted); }
+    .log .ts { color: var(--accent); }
+    .log .ok { color: var(--green); }
+    .log .err { color: var(--red); }
+    .log .bridge { color: var(--purple); }
+    #toolsList { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+    .full-width { grid-column: 1 / -1; }
+    input, select { background: var(--bg); color: var(--text); border: 1px solid var(--border);
+                    border-radius: 6px; padding: 6px 10px; font-size: 0.85rem; font-family: inherit; }
+    label { font-size: 0.8rem; color: var(--muted); display: block; margin-bottom: 4px; }
+    .form-row { display: flex; gap: 8px; align-items: end; margin-bottom: 8px; }
+    .form-row > div { flex: 1; }
+    .section-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px;
+                     color: var(--muted); margin: 16px 0 8px; }
+    .arch-diagram { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+                    padding: 16px; font-size: 0.75rem; line-height: 1.8; text-align: center;
+                    color: var(--muted); margin-bottom: 12px; }
+    .arch-diagram .highlight { color: var(--accent); font-weight: 600; }
+    .arch-diagram .bridge-hl { color: var(--purple); font-weight: 600; }
+  </style>
+</head>
+<body>
+
+<h1>GraphXR MCP Hub — Integration Demo</h1>
+<p class="subtitle">End-to-end demo: auto-discovery, MCP client (LLM Agent), and GraphXR bridge (passive SSE+REST).</p>
+
+<!-- Architecture Diagram -->
+<div class="arch-diagram">
+  <span class="bridge-hl">GraphXR WebGL</span> &larr; SSE events &larr;
+  <span class="highlight">MCP Hub (:8899)</span>
+  &larr; MCP protocol &larr; <span class="highlight">LLM Agent</span><br/>
+  <span class="bridge-hl">GET /graphxr/events</span> &nbsp;|&nbsp;
+  <span class="bridge-hl">POST /graphxr/results</span> &nbsp;|&nbsp;
+  <span class="highlight">GET /sse</span> &nbsp;|&nbsp;
+  <span class="highlight">POST /messages</span>
+</div>
+
+<div class="grid">
+  <!-- 1. Discovery Panel -->
+  <div class="card">
+    <h2>1. Auto-Discovery <span id="discoBadge" class="badge wait">pending</span></h2>
+    <div class="btn-row">
+      <button id="btnDiscover" onclick="runDiscovery()">Discover MCP Server</button>
+      <button class="btn-secondary" onclick="runDiscovery(true)">Custom Port...</button>
+    </div>
+    <pre id="discoResult">Click "Discover MCP Server" to probe localhost:8899</pre>
+  </div>
+
+  <!-- 2. GraphXR Bridge Panel -->
+  <div class="card">
+    <h2>2. GraphXR Bridge <span id="bridgeBadge" class="badge wait">disconnected</span></h2>
+    <p style="font-size:0.8rem;color:var(--muted);margin-bottom:8px;">Simulates GraphXR connecting to the Hub via SSE to receive commands.</p>
+    <div class="btn-row">
+      <button id="btnBridgeConnect" class="btn-purple" onclick="connectBridge()" disabled>Connect as GraphXR</button>
+      <button id="btnBridgeDisconnect" class="btn-secondary" onclick="disconnectBridge()" disabled>Disconnect</button>
+      <button id="btnBridgeStatus" class="btn-secondary" onclick="checkBridgeStatus()">Status</button>
+    </div>
+    <pre id="bridgeResult">Discover the server first, then connect as GraphXR.</pre>
+  </div>
+
+  <!-- 3. MCP Client (SSE) -->
+  <div class="card">
+    <h2>3. MCP Client (Agent) <span id="sseBadge" class="badge wait">disconnected</span></h2>
+    <p style="font-size:0.8rem;color:var(--muted);margin-bottom:8px;">Connects as an LLM agent via MCP protocol to call tools.</p>
+    <div class="btn-row">
+      <button id="btnConnect" onclick="connectSSE()" disabled>Connect as Agent</button>
+      <button id="btnDisconnect" class="btn-secondary" onclick="disconnectSSE()" disabled>Disconnect</button>
+    </div>
+    <pre id="sseResult">Discover the server first, then connect.</pre>
+  </div>
+
+  <!-- 4. Available Tools -->
+  <div class="card">
+    <h2>4. Available Tools</h2>
+    <button id="btnListTools" onclick="listTools()" disabled>List Tools</button>
+    <div id="toolsList"></div>
+  </div>
+
+  <!-- 5. Call Tool -->
+  <div class="card">
+    <h2>5. Call a Tool</h2>
+    <div class="form-row">
+      <div>
+        <label>Tool</label>
+        <select id="toolSelect" onchange="onToolSelect()">
+          <option value="">-- connect first --</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div style="flex:3">
+        <label>Arguments (JSON)</label>
+        <textarea id="toolArgs" placeholder='{}' rows="4" style="width:100%;resize:vertical;font-family:monospace;font-size:0.8rem;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px"></textarea>
+      </div>
+      <div style="flex:0">
+        <button id="btnCallTool" onclick="callTool()" disabled>Call</button>
+      </div>
+    </div>
+    <pre id="toolResult" style="margin-top:8px;">--</pre>
+  </div>
+
+  <!-- 6. Quick Actions (end-to-end) -->
+  <div class="card">
+    <h2>6. Quick Actions</h2>
+    <p style="font-size:0.8rem;color:var(--muted);margin-bottom:8px;">
+      Graph tools route through the bridge. Data tools (DuckDB) work directly.
+    </p>
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="quickAction('get_graph_state')" id="qa1" disabled>Get Graph State</button>
+      <button class="btn-secondary" onclick="quickAction('list_tables')" id="qa2" disabled>List Tables</button>
+      <button class="btn-purple" onclick="quickPush()" id="qa3" disabled>Push Sample Graph</button>
+    </div>
+    <pre id="quickResult">--</pre>
+  </div>
+
+  <!-- 7. Bridge Command Log -->
+  <div class="card">
+    <h2>7. Bridge Commands <span id="bridgeCmdCount" class="badge purple">0</span></h2>
+    <p style="font-size:0.8rem;color:var(--muted);margin-bottom:8px;">Commands received by the simulated GraphXR instance.</p>
+    <button class="btn-secondary" onclick="document.getElementById('bridgeLog').innerHTML=''">Clear</button>
+    <pre id="bridgeLog" class="log" style="margin-top:8px;max-height:200px;"></pre>
+  </div>
+
+  <!-- 8. Event Log -->
+  <div class="card">
+    <h2>8. Event Log</h2>
+    <button class="btn-secondary" onclick="clearLog()">Clear</button>
+    <pre id="eventLog" class="log" style="margin-top:8px;max-height:200px;"></pre>
+  </div>
+</div>
+
+<script>
+// === State ================================================================
+let baseUrl = 'http://localhost:8899';
+let sseEndpoint = null;
+let messagesUrl = null;
+let sessionId = null;
+let eventSource = null;
+let mcpRequestId = 0;
+const pendingRequests = new Map();
+
+// Bridge state
+let bridgeEventSource = null;
+let bridgeConnectionId = null;
+let bridgeCmdCount = 0;
+
+// === Logging ==============================================================
+function log(msg, cls = '') {
+  const el = document.getElementById('eventLog');
+  const ts = new Date().toLocaleTimeString();
+  el.innerHTML += `<span class="ts">[${ts}]</span> <span class="${cls}">${esc(msg)}</span>\n`;
+  el.scrollTop = el.scrollHeight;
+}
+function bridgeLog(msg, cls = '') {
+  const el = document.getElementById('bridgeLog');
+  const ts = new Date().toLocaleTimeString();
+  el.innerHTML += `<span class="ts">[${ts}]</span> <span class="${cls}">${esc(msg)}</span>\n`;
+  el.scrollTop = el.scrollHeight;
+}
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function clearLog() { document.getElementById('eventLog').innerHTML = ''; }
+
+// === 1. Auto-Discovery ====================================================
+async function runDiscovery(custom = false) {
+  if (custom) {
+    const port = prompt('Enter port to probe:', '8899');
+    if (!port) return;
+    baseUrl = `http://localhost:${port}`;
+  } else {
+    baseUrl = 'http://localhost:8899';
+  }
+
+  const badge = document.getElementById('discoBadge');
+  const result = document.getElementById('discoResult');
+  badge.className = 'badge wait'; badge.textContent = 'probing...';
+  result.textContent = `Probing ${baseUrl} ...`;
+  log(`Discovery: probing ${baseUrl}`);
+
+  try {
+    const health = await fetchJson(`${baseUrl}/health`, 3000);
+    log(`  /health -> ${health.status}`, 'ok');
+
+    const info = await fetchJson(`${baseUrl}/mcp-info`, 3000);
+    log(`  /mcp-info -> ${info.name} v${info.version}, ${info.tools?.length ?? 0} tools`, 'ok');
+
+    if (info.graphxrBridge) {
+      log(`  Bridge endpoints: events=${info.graphxrBridge.eventsEndpoint}, results=${info.graphxrBridge.resultsEndpoint}`, 'ok');
+    }
+
+    sseEndpoint = `${baseUrl}${info.sseEndpoint || '/sse'}`;
+    messagesUrl = `${baseUrl}/messages`;
+
+    badge.className = 'badge ok'; badge.textContent = 'found';
+    result.textContent = JSON.stringify(info, null, 2);
+
+    document.getElementById('btnConnect').disabled = false;
+    document.getElementById('btnBridgeConnect').disabled = false;
+    log('Discovery complete', 'ok');
+  } catch (err) {
+    badge.className = 'badge err'; badge.textContent = 'not found';
+    result.textContent = `Failed: ${err.message}\n\nMake sure the MCP server is running:\n  yarn dev`;
+    log(`Discovery failed: ${err.message}`, 'err');
+  }
+}
+
+async function fetchJson(url, timeoutMs) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally { clearTimeout(timer); }
+}
+
+// === 2. GraphXR Bridge (Passive SSE + REST) ===============================
+function connectBridge() {
+  const badge = document.getElementById('bridgeBadge');
+  const result = document.getElementById('bridgeResult');
+  badge.className = 'badge wait'; badge.textContent = 'connecting...';
+  log('Bridge: connecting to /graphxr/events', 'bridge');
+
+  bridgeEventSource = new EventSource(`${baseUrl}/graphxr/events`);
+
+  bridgeEventSource.addEventListener('connected', (ev) => {
+    const data = JSON.parse(ev.data);
+    bridgeConnectionId = data.connectionId;
+    badge.className = 'badge ok'; badge.textContent = 'connected';
+    result.textContent = `ConnectionID: ${bridgeConnectionId}\nListening for commands...`;
+    log(`Bridge: connected as ${bridgeConnectionId}`, 'ok');
+    bridgeLog(`Connected. ID: ${bridgeConnectionId}`, 'ok');
+
+    document.getElementById('btnBridgeConnect').disabled = true;
+    document.getElementById('btnBridgeDisconnect').disabled = false;
+  });
+
+  bridgeEventSource.addEventListener('command', (ev) => {
+    const cmd = JSON.parse(ev.data);
+    bridgeCmdCount++;
+    document.getElementById('bridgeCmdCount').textContent = bridgeCmdCount;
+    bridgeLog(`Command: ${cmd.method}(${JSON.stringify(cmd.params).slice(0, 80)})`, 'bridge');
+    log(`Bridge: received command ${cmd.method} [${cmd.requestId.slice(0,8)}]`, 'bridge');
+
+    // Simulate GraphXR executing the command and returning a result
+    const result = simulateGraphXRExecution(cmd.method, cmd.params);
+
+    // POST result back to Hub
+    fetch(`${baseUrl}/graphxr/results`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestId: cmd.requestId,
+        connectionId: bridgeConnectionId,
+        result: result.value,
+        error: result.error || null,
+      }),
+    }).then(res => res.json()).then(r => {
+      bridgeLog(`  -> Result posted: ${r.ok ? 'OK' : r.error}`, r.ok ? 'ok' : 'err');
+    }).catch(err => {
+      bridgeLog(`  -> POST failed: ${err.message}`, 'err');
+    });
+  });
+
+  bridgeEventSource.addEventListener('heartbeat', () => {
+    // Silent heartbeat
+  });
+
+  bridgeEventSource.onerror = () => {
+    badge.className = 'badge err'; badge.textContent = 'error';
+    log('Bridge: SSE connection error', 'err');
+  };
+}
+
+function disconnectBridge() {
+  if (bridgeEventSource) { bridgeEventSource.close(); bridgeEventSource = null; }
+  bridgeConnectionId = null;
+  const badge = document.getElementById('bridgeBadge');
+  badge.className = 'badge wait'; badge.textContent = 'disconnected';
+  document.getElementById('bridgeResult').textContent = 'Disconnected.';
+  document.getElementById('btnBridgeConnect').disabled = false;
+  document.getElementById('btnBridgeDisconnect').disabled = true;
+  log('Bridge: disconnected', 'bridge');
+}
+
+async function checkBridgeStatus() {
+  try {
+    const status = await fetchJson(`${baseUrl}/graphxr/status`, 3000);
+    document.getElementById('bridgeResult').textContent = JSON.stringify(status, null, 2);
+    log(`Bridge status: ${status.connectedInstances} instance(s), ${status.pendingRequests} pending`, 'bridge');
+  } catch (err) {
+    document.getElementById('bridgeResult').textContent = `Error: ${err.message}`;
+  }
+}
+
+// Simulated GraphXR execution — returns mock results for each method
+function simulateGraphXRExecution(method, params) {
+  switch (method) {
+    case 'pushGraph':
+      return { value: null };
+    case 'addNodes':
+      return { value: null };
+    case 'addEdges':
+      return { value: null };
+    case 'updateNode':
+      return { value: null };
+    case 'clearGraph':
+      return { value: null };
+    case 'getGraphState':
+      return {
+        value: {
+          nodeCount: 42, edgeCount: 67,
+          categories: { Person: 20, Project: 12, Org: 10 },
+          relationships: { WORKS_ON: 30, MANAGES: 20, COLLABORATES_WITH: 17 },
+        }
+      };
+    case 'getNodes':
+      return {
+        value: [
+          { id: 'n1', category: 'Person', properties: { name: 'Alice', role: 'Engineer' } },
+          { id: 'n2', category: 'Person', properties: { name: 'Bob', role: 'Designer' } },
+        ]
+      };
+    case 'getEdges':
+      return {
+        value: [
+          { id: 'e1', source: 'n1', target: 'n2', relationship: 'COLLABORATES_WITH', properties: {} },
+        ]
+      };
+    case 'findNeighbors':
+      return {
+        value: {
+          nodes: [{ id: 'n2', category: 'Person', properties: { name: 'Bob' } }],
+          edges: [{ id: 'e1', source: 'n1', target: 'n2', relationship: 'COLLABORATES_WITH', properties: {} }],
+        }
+      };
+    default:
+      return { value: null, error: `Unknown method: ${method}` };
+  }
+}
+
+// === 3. MCP Client (Agent SSE) ============================================
+function connectSSE() {
+  if (!sseEndpoint) return;
+  const badge = document.getElementById('sseBadge');
+  const result = document.getElementById('sseResult');
+  badge.className = 'badge wait'; badge.textContent = 'connecting...';
+  log(`MCP Client: connecting to ${sseEndpoint}`);
+
+  eventSource = new EventSource(sseEndpoint);
+
+  eventSource.addEventListener('endpoint', (ev) => {
+    const postPath = ev.data;
+    const url = new URL(postPath, sseEndpoint);
+    messagesUrl = url.href;
+    sessionId = url.searchParams.get('sessionId');
+
+    badge.className = 'badge ok'; badge.textContent = 'connected';
+    result.textContent = `Session: ${sessionId}\nPOST endpoint: ${messagesUrl}`;
+    log(`MCP Client: connected, session ${sessionId}`, 'ok');
+
+    enableToolButtons(true);
+    listTools();
+  });
+
+  eventSource.addEventListener('message', (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      log(`MCP message: ${JSON.stringify(msg).slice(0, 120)}`);
+      handleMcpResponse(msg);
+    } catch (e) {
+      log(`MCP parse error: ${e.message}`, 'err');
+    }
+  });
+
+  eventSource.onerror = () => {
+    badge.className = 'badge err'; badge.textContent = 'error';
+    log('MCP Client: SSE error', 'err');
+  };
+}
+
+function disconnectSSE() {
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  sessionId = null;
+  document.getElementById('sseBadge').className = 'badge wait';
+  document.getElementById('sseBadge').textContent = 'disconnected';
+  document.getElementById('sseResult').textContent = 'Disconnected.';
+  enableToolButtons(false);
+  log('MCP Client: disconnected');
+}
+
+// === MCP JSON-RPC =========================================================
+function sendMcpRequest(method, params = {}) {
+  return new Promise((resolve, reject) => {
+    if (!messagesUrl) return reject(new Error('Not connected'));
+    const id = String(++mcpRequestId);
+    pendingRequests.set(id, { resolve, reject });
+
+    const body = JSON.stringify({ jsonrpc: '2.0', id, method, params });
+    log(`-> ${method} (id=${id})`);
+
+    fetch(messagesUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    }).then(res => {
+      if (!res.ok) {
+        pendingRequests.delete(id);
+        res.text().then(t => reject(new Error(`POST ${res.status}: ${t}`)));
+      }
+    }).catch(err => {
+      pendingRequests.delete(id);
+      reject(err);
+    });
+  });
+}
+
+function handleMcpResponse(msg) {
+  const id = String(msg.id);
+  if (id && pendingRequests.has(id)) {
+    const { resolve, reject } = pendingRequests.get(id);
+    pendingRequests.delete(id);
+    if (msg.error) reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+    else resolve(msg.result);
+  }
+}
+
+// === 4. List Tools ========================================================
+async function listTools() {
+  try {
+    const result = await sendMcpRequest('tools/list');
+    const tools = result.tools || [];
+    log(`<- tools/list: ${tools.length} tools`, 'ok');
+
+    const container = document.getElementById('toolsList');
+    container.innerHTML = tools.map(t => `<span class="tool-chip" title="${esc(t.description)}">${esc(t.name)}</span>`).join('');
+
+    const select = document.getElementById('toolSelect');
+    select.innerHTML = '<option value="">-- select tool --</option>'
+      + tools.map(t => `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
+  } catch (err) {
+    log(`tools/list failed: ${err.message}`, 'err');
+  }
+}
+
+// === 5. Call Tool =========================================================
+const TOOL_EXAMPLES = {
+  push_graph: {
+    nodes: [
+      { id: "n1", category: "Person", properties: { name: "Alice", role: "Engineer" } },
+      { id: "n2", category: "Person", properties: { name: "Bob", role: "Designer" } },
+      { id: "n3", category: "Project", properties: { name: "GraphXR Hub", status: "active" } }
+    ],
+    edges: [
+      { id: "e1", source: "n1", target: "n3", relationship: "WORKS_ON", properties: { since: "2024-01" } },
+      { id: "e2", source: "n2", target: "n3", relationship: "WORKS_ON", properties: { since: "2024-03" } },
+      { id: "e3", source: "n1", target: "n2", relationship: "COLLABORATES_WITH", properties: {} }
+    ]
+  },
+  add_nodes: {
+    nodes: [
+      { id: "n4", category: "Person", properties: { name: "Carol", role: "PM" } },
+      { id: "n5", category: "Org", properties: { name: "Kineviz", industry: "Graph Visualization" } }
+    ]
+  },
+  add_edges: {
+    edges: [
+      { id: "e4", source: "n4", target: "n3", relationship: "MANAGES", properties: {} },
+      { id: "e5", source: "n1", target: "n5", relationship: "BELONGS_TO", properties: {} }
+    ]
+  },
+  update_node: {
+    id: "n1",
+    properties: { role: "Senior Engineer", team: "Platform", updated_at: "2025-03-26" }
+  },
+  clear_graph: {},
+  get_graph_state: {},
+  get_nodes: {
+    filter: { category: "Person" }
+  },
+  get_edges: {
+    filter: { relationship: "WORKS_ON" }
+  },
+  find_neighbors: {
+    node_id: "n1"
+  },
+  ingest_file: {
+    file_content: "id,name,department,salary\\n1,Alice,Engineering,120000\\n2,Bob,Design,110000\\n3,Carol,PM,115000",
+    format: "csv",
+    table_name: "employees"
+  },
+  query_data: {
+    sql: "SELECT * FROM employees WHERE salary > 100000 ORDER BY salary DESC",
+    push_to_graphxr: false
+  },
+  list_tables: {},
+  connect_source: {
+    name: "filesystem",
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+    description: "Local filesystem access"
+  }
+};
+
+function onToolSelect() {
+  const name = document.getElementById('toolSelect').value;
+  document.getElementById('btnCallTool').disabled = !name;
+  if (name && TOOL_EXAMPLES[name] !== undefined) {
+    document.getElementById('toolArgs').value = JSON.stringify(TOOL_EXAMPLES[name], null, 2);
+  } else {
+    document.getElementById('toolArgs').value = '{}';
+  }
+}
+
+async function callTool() {
+  const name = document.getElementById('toolSelect').value;
+  if (!name) return;
+  let args = {};
+  try { args = JSON.parse(document.getElementById('toolArgs').value || '{}'); } catch { }
+
+  const el = document.getElementById('toolResult');
+  el.textContent = 'Calling...';
+  try {
+    const result = await sendMcpRequest('tools/call', { name, arguments: args });
+    el.textContent = JSON.stringify(result, null, 2);
+    log(`<- tools/call ${name}: OK`, 'ok');
+  } catch (err) {
+    el.textContent = `Error: ${err.message}`;
+    log(`tools/call ${name} failed: ${err.message}`, 'err');
+  }
+}
+
+// === 6. Quick Actions =====================================================
+async function quickAction(toolName) {
+  const el = document.getElementById('quickResult');
+  el.textContent = `Calling ${toolName}...`;
+  try {
+    const result = await sendMcpRequest('tools/call', { name: toolName, arguments: {} });
+    el.textContent = JSON.stringify(result, null, 2);
+    log(`Quick: ${toolName} OK`, 'ok');
+  } catch (err) {
+    el.textContent = `Error: ${err.message}`;
+    log(`Quick: ${toolName} failed: ${err.message}`, 'err');
+  }
+}
+
+async function quickPush() {
+  const sampleGraph = {
+    nodes: [
+      { id: 'alice', category: 'Person', properties: { name: 'Alice', role: 'Engineer' } },
+      { id: 'bob',   category: 'Person', properties: { name: 'Bob',   role: 'Designer' } },
+      { id: 'proj1', category: 'Project', properties: { name: 'GraphXR MCP Hub' } },
+    ],
+    edges: [
+      { id: 'e1', source: 'alice', target: 'proj1', relationship: 'WORKS_ON', properties: { since: '2024-01' } },
+      { id: 'e2', source: 'bob',   target: 'proj1', relationship: 'WORKS_ON', properties: { since: '2024-03' } },
+      { id: 'e3', source: 'alice', target: 'bob',   relationship: 'COLLABORATES_WITH', properties: {} },
+    ],
+  };
+
+  const el = document.getElementById('quickResult');
+  el.textContent = 'Pushing sample graph...';
+  try {
+    const result = await sendMcpRequest('tools/call', { name: 'push_graph', arguments: sampleGraph });
+    el.textContent = JSON.stringify(result, null, 2);
+    log('Quick: push_graph OK', 'ok');
+  } catch (err) {
+    el.textContent = `Error: ${err.message}`;
+    log(`Quick: push_graph failed: ${err.message}`, 'err');
+  }
+}
+
+// === Helpers ===============================================================
+function enableToolButtons(on) {
+  document.getElementById('btnListTools').disabled = !on;
+  document.getElementById('btnDisconnect').disabled = !on;
+  document.getElementById('btnConnect').disabled = on;
+  document.getElementById('qa1').disabled = !on;
+  document.getElementById('qa2').disabled = !on;
+  document.getElementById('qa3').disabled = !on;
+  if (!on) {
+    document.getElementById('toolSelect').innerHTML = '<option value="">-- connect first --</option>';
+    document.getElementById('btnCallTool').disabled = true;
+  }
+}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "env": {
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(npm*)",
+      "Bash(npx*)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill *)",
+      "Bash(yarn add:*)"
+    ]
+  }
+}

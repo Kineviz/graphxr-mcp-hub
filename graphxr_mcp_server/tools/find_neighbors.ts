@@ -4,14 +4,14 @@
  */
 
 import { z } from 'zod';
-import { GraphXRClient } from '../graphxr_client.js';
+import { IGraphXRClient } from '../graphxr_bridge';
 
 const FindNeighborsArgsSchema = z.object({
   node_id: z.string(),
 });
 
 export async function findNeighbors(
-  client: GraphXRClient,
+  client: IGraphXRClient,
   args: unknown
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const { node_id } = FindNeighborsArgsSchema.parse(args);

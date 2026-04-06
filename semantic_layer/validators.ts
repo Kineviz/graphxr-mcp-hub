@@ -3,7 +3,7 @@
  * built on top of the Zod schemas in graph_schema.ts.
  */
 
-import { GraphDataSchema, GraphNodeSchema, GraphEdgeSchema, GraphData, GraphNode, GraphEdge } from './graph_schema.js';
+import { GraphDataSchema, GraphNodeSchema, GraphEdgeSchema, GraphData, GraphNode, GraphEdge } from './graph_schema';
 
 export function validateGraphData(data: unknown): GraphData {
   return GraphDataSchema.parse(data);

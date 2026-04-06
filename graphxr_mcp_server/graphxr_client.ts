@@ -1,15 +1,14 @@
 /**
- * GraphXR WebGL Bridge (WebSocket Client)
+ * @deprecated Use GraphXRBridge from './graphxr_bridge' instead.
+ * This file will be removed in v0.2.0.
  *
- * Communicates with the GraphXR web application running in the browser.
- * GraphXR exposes a local WebSocket server (default: ws://localhost:8080)
- * that accepts commands for reading / writing graph data in the WebGL canvas.
- *
- * All MCP tool handlers use this client to fulfil their requests.
+ * Legacy WebSocket-based client that actively connects TO GraphXR.
+ * The new architecture inverts this: GraphXR discovers and connects to the Hub
+ * via SSE + REST (see graphxr_bridge.ts).
  */
 
 import WebSocket from 'ws';
-import { GraphData, GraphNode, GraphEdge, GraphState } from '../semantic_layer/graph_schema.js';
+import { GraphData, GraphNode, GraphEdge, GraphState } from '../semantic_layer/graph_schema';
 
 export interface GraphXRClientOptions {
   connectTimeoutMs?: number;

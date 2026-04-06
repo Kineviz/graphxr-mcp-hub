@@ -3,7 +3,7 @@
  * Converts Neo4j query results (nodes + relationships) into GraphData.
  */
 
-import { GraphData, GraphNode, GraphEdge } from '../graph_schema.js';
+import { GraphData, GraphNode, GraphEdge } from '../graph_schema';
 
 interface Neo4jNode {
   identity: { low: number };

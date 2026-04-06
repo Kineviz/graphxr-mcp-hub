@@ -3,7 +3,7 @@
  * Converts a JSON array (or single object) into GraphData.
  */
 
-import { GraphData, GraphNode } from '../graph_schema.js';
+import { GraphData, GraphNode } from '../graph_schema';
 
 export interface JsonTransformConfig {
   nodeCategory?: string;

@@ -183,4 +183,105 @@ export const ALL_TOOL_DEFINITIONS: Tool[] = [
       required: ['node_id'],
     },
   },
+
+  // ── Data ingestion & query (built-in DuckDB) ────────────────────────────
+  {
+    name: 'ingest_file',
+    description:
+      'Load a data file (CSV, JSON, or Parquet) into the Hub\'s built-in database. ' +
+      'Returns the table schema (column names and types), row count, and sample rows. ' +
+      'After ingestion, use query_data to run SQL queries on the loaded data. ' +
+      'Accepts either a file_path or raw file_content (for inline data).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file_path: {
+          type: 'string',
+          description: 'Path to the data file (CSV, JSON, Parquet). Format is auto-detected from extension.',
+        },
+        file_content: {
+          type: 'string',
+          description: 'Raw file content as a string (CSV or JSON). Used when passing inline data instead of a file path.',
+        },
+        format: {
+          type: 'string',
+          enum: ['csv', 'json', 'parquet'],
+          description: 'File format hint. Auto-detected from file_path extension if omitted.',
+        },
+        table_name: {
+          type: 'string',
+          description: 'Custom table name. Auto-generated from filename if omitted.',
+        },
+      },
+      required: [],
+    },
+  },
+
+  {
+    name: 'query_data',
+    description:
+      'Execute a SQL query against data loaded via ingest_file. ' +
+      'Supports full SQL syntax (SELECT, JOIN, GROUP BY, etc.). ' +
+      'Set push_to_graphxr=true to automatically transform query results into graph nodes/edges ' +
+      'and push them to GraphXR for visualization. Use transform_config to control how rows ' +
+      'map to nodes and edges (nodeCategory, idColumn, targetColumn, relationship).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sql: {
+          type: 'string',
+          description: 'SQL query to execute (e.g., SELECT * FROM users WHERE age > 25).',
+        },
+        push_to_graphxr: {
+          type: 'boolean',
+          description: 'If true, transform results to graph data and push to GraphXR.',
+        },
+        transform_config: {
+          type: 'object',
+          description: 'Configuration for graph transformation when push_to_graphxr is true.',
+          properties: {
+            nodeCategory: { type: 'string', description: 'Category/label for nodes (e.g., "User", "Product").' },
+            idColumn: { type: 'string', description: 'Column to use as node ID (default: "id").' },
+            targetColumn: { type: 'string', description: 'Column whose values become edge targets. If set, edges are created.' },
+            relationship: { type: 'string', description: 'Relationship type for edges (default: "RELATED_TO").' },
+          },
+        },
+      },
+      required: ['sql'],
+    },
+  },
+
+  {
+    name: 'list_tables',
+    description:
+      'List all data tables currently loaded in the Hub\'s built-in database. ' +
+      'Shows table names, column schemas, and row counts.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+
+  // ── Source management ───────────────────────────────────────────────────
+  {
+    name: 'connect_source',
+    description:
+      'Connect to an external data source (MCP server) on-demand. ' +
+      'For pre-configured sources, just provide the name (e.g., "toolbox", "filesystem"). ' +
+      'For new sources, provide transport details (sse url or stdio command). ' +
+      'Once connected, the source\'s tools become available with the prefix "{name}__".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Source name (e.g., "toolbox", "filesystem", "my-neo4j").' },
+        transport: { type: 'string', enum: ['sse', 'stdio'], description: 'Transport type. Required for new sources.' },
+        url: { type: 'string', description: 'SSE endpoint URL (for transport=sse).' },
+        command: { type: 'string', description: 'Command to spawn (for transport=stdio, e.g., "npx").' },
+        args: { type: 'array', items: { type: 'string' }, description: 'Command arguments (for transport=stdio).' },
+        description: { type: 'string', description: 'Human-readable description of the source.' },
+      },
+      required: ['name'],
+    },
+  },
 ];

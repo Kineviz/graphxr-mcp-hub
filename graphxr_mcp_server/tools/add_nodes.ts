@@ -4,24 +4,36 @@
  */
 
 import { z } from 'zod';
-import { GraphXRClient } from '../graphxr_client.js';
-import { GraphNodeSchema } from '../../semantic_layer/graph_schema.js';
+import { IGraphXRClient } from '../graphxr_bridge';
+import { GraphNodeSchema } from '../../semantic_layer/graph_schema';
+import { attachLineage, generateOperationId, LineageTracker } from '../../semantic_layer/lineage';
 
 const AddNodesArgsSchema = z.object({
   nodes: z.array(GraphNodeSchema),
+  source: z.string().optional(),
 });
 
 export async function addNodes(
-  client: GraphXRClient,
-  args: unknown
+  client: IGraphXRClient,
+  args: unknown,
+  lineageTracker?: LineageTracker
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
-  const { nodes } = AddNodesArgsSchema.parse(args);
-  await client.addNodes(nodes);
+  const { nodes, source } = AddNodesArgsSchema.parse(args);
+  const operationId = generateOperationId();
+  const lineage = {
+    source: source ?? 'mcp-client',
+    operation: 'add_nodes',
+    timestamp: new Date().toISOString(),
+    operationId,
+  };
+  const tagged = attachLineage({ nodes, edges: [] }, lineage);
+  await client.addNodes(tagged.nodes);
+  lineageTracker?.record({ ...lineage, nodeCount: nodes.length, edgeCount: 0 });
   return {
     content: [
       {
         type: 'text',
-        text: `Added ${nodes.length} node(s) to GraphXR.`,
+        text: `Added ${nodes.length} node(s) to GraphXR. [${operationId}]`,
       },
     ],
   };

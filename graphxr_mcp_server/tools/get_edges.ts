@@ -4,14 +4,14 @@
  */
 
 import { z } from 'zod';
-import { GraphXRClient } from '../graphxr_client.js';
+import { IGraphXRClient } from '../graphxr_bridge';
 
 const GetEdgesArgsSchema = z.object({
   filter: z.record(z.unknown()).optional(),
 });
 
 export async function getEdges(
-  client: GraphXRClient,
+  client: IGraphXRClient,
   args: unknown
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const { filter } = GetEdgesArgsSchema.parse(args ?? {});

@@ -1,55 +1,63 @@
-# config/hub_config.yaml — GraphXR MCP Hub 总控配置
-#
-# 说明：
-#   - GraphXR MCP Server 默认监听 localhost:8899
-#   - GraphXR Agent（web 前端 chat 页面）和其他 LLM 客户端（Claude、Codex 等）
-#     均可通过轮询 /health + /mcp-info 端口自动发现此服务，连接是可选的
-#   - 其他数据源均为可选，按需开启
-
-# ── GraphXR MCP Server（自实现，唯一必须运行的服务）─────────────────────────
 graphxr_mcp_server:
   enabled: true
-  # 默认端口 8899 — GraphXR Agent 前端会自动探测此端口
   port: 8899
-  # GraphXR web 应用的 WebSocket 地址（GraphXR 运行时自动开启）
-  graphxr_ws_url: "${GRAPHXR_WS_URL:-ws://localhost:8080}"
-  # 传输模式: http (SSE, 供前端/浏览器使用) 或 stdio (供 CLI 工具使用)
+  graphxr_ws_url: ${GRAPHXR_WS_URL:-ws://localhost:8080}
   transport: http
-
-# ── A. DuckDB MCP Server（CSV/JSON/Parquet 文件数据源）──────────────────────
 duckdb:
   enabled: true
   transport: stdio
-  command: "uvx"
-  args: ["mcp-server-duckdb", "--db-path", ":memory:"]
-  description: "CSV/JSON/Parquet 文件 SQL 查询（支持本地文件和 S3）"
-
-# ── B. googleapis/genai-toolbox（数据库数据源）───────────────────────────────
+  command: uvx
+  args:
+    - mcp-server-duckdb
+    - --db-path
+    - ":memory:"
+  description: CSV/JSON/Parquet 文件 SQL 查询（支持本地文件和 S3）
 toolbox:
-  enabled: false               # 需要数据库时设为 true
+  enabled: false
   transport: sse
-  url: "${GENAI_TOOLBOX_URL:-http://localhost:5000/sse}"
-  tools_file: "config/tools.yaml"
-  description: "Google genai-toolbox：Neo4j / Spanner / PostgreSQL / BigQuery 等"
-
-# ── C. MCP Registry 按需加载 ─────────────────────────────────────────────────
+  url: ${GENAI_TOOLBOX_URL:-http://localhost:5000/sse}
+  tools_file: config/tools.yaml
+  description: Google genai-toolbox：Neo4j / Spanner / PostgreSQL / BigQuery 等
+kafka:
+  enabled: false
+  ws_url: ${KAFKA_WS_URL:-ws://localhost:9092/ws}
+  topics:
+    - graph-events
+  group_id: graphxr-mcp-hub
+  batch_size: 10
+  batch_timeout_ms: 5000
+  transform:
+    node_category: Event
+    id_field: id
+    include_metadata: true
+  description: Kafka 实时流 → GraphXR（通过 WebSocket 代理）
+ollama:
+  enabled: false
+  url: ${OLLAMA_URL:-http://localhost:11434}
+  model: ${OLLAMA_MODEL:-llama3}
+  description: Ollama 本地 LLM 后端（无需云端 API）
 mcp_servers:
-  - name: filesystem
-    enabled: true
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "${DATA_DIR:-./data}"]
-    description: "本地文件读写"
-
   - name: fetch
     enabled: true
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-fetch"]
-    description: "HTTP REST API 抓取"
-
+    command: npx
+    args:
+      - -y
+      - "@modelcontextprotocol/server-fetch"
+    description: HTTP REST API 抓取（按需接入）
   - name: github
-    enabled: false             # 需要访问 GitHub 时设为 true
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-github"]
+    enabled: false
+    command: npx
+    args:
+      - -y
+      - "@modelcontextprotocol/server-github"
     env:
-      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
-    description: "GitHub 代码仓库访问"
+      GITHUB_PERSONAL_ACCESS_TOKEN: ""
+    description: GitHub 代码仓库访问（按需接入）
+  - name: filesystem
+    enabled: true
+    command: npx
+    args:
+      - -y
+      - "@modelcontextprotocol/server-filesystem"
+      - /tmp
+    description: Local filesystem access

@@ -678,14 +678,14 @@ npm run build
 - [x] 自动发现端点（/health + /mcp-info）
 - [x] SSE + STDIO 双传输模式
 - [x] 统一图语义层（Zod Schema + 数据转换器）
-- [ ] GraphXR Agent 前端接入自动发现逻辑
-- [ ] DuckDB MCP 集成测试（CSV/JSON/Parquet → GraphXR）
-- [ ] Docker Compose 一键启动（genai-toolbox + graphxr-mcp-server）
-- [ ] 支持实时流数据源（Kafka WebSocket MCP）
-- [ ] 数据血缘追踪（从哪个数据源、哪个文件来的节点）
-- [ ] 多客户端协作：多个 LLM 客户端共享同一 MCP Server
-- [ ] Web 管理 UI（可视化配置 hub_config.yaml）
-- [ ] 支持更多 LLM 后端（Ollama 本地模型）
+- [x] GraphXR Agent 前端接入自动发现逻辑（discovery_client.ts 发现客户端 SDK）
+- [x] DuckDB MCP 集成测试（CSV/JSON/Parquet → GraphXR）
+- [x] Docker Compose 一键启动（genai-toolbox + graphxr-mcp-server）
+- [x] 支持实时流数据源（Kafka WebSocket MCP — kafka_transformer + kafka_bridge）
+- [x] 数据血缘追踪（lineage.ts — 自动注入 _lineage 元数据 + 操作日志）
+- [x] 多客户端协作（session_manager.ts — SSE 会话管理 + 状态广播 + /sessions 端点）
+- [x] Web 管理 UI（/admin 仪表盘 — 配置管理 / 会话监控 / 血缘查看）
+- [x] 支持更多 LLM 后端（Ollama 本地模型 — ollama_config.ts 配置生成器）
 
 ---
 
@@ -701,4 +701,4 @@ npm run build
 
 ---
 
-*文档版本：v1.0.0 | 更新日期：2026-03-24 | 维护团队：Kineviz*
+*文档版本：v0.1.0 | 更新日期：2026-03-26 | 维护团队：Kineviz*

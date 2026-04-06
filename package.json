@@ -1,12 +1,15 @@
 {
   "name": "graphxr-mcp-hub",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "GraphXR MCP Hub — Multi-source data × MCP protocol × unified graph semantic layer × GraphXR integration",
   "main": "dist/graphxr_mcp_server/index.js",
   "scripts": {
-    "build": "tsc",
-    "start:graphxr-mcp": "node dist/graphxr_mcp_server/index.js",
-    "dev:graphxr-mcp": "ts-node graphxr_mcp_server/index.ts",
+    "build": "tsc && yarn build:admin",
+    "build:server": "tsc",
+    "build:admin": "cd admin_ui && yarn install && yarn build",
+    "dev:admin": "cd admin_ui && yarn dev",
+    "start": "node dist/graphxr_mcp_server/index.js",
+    "dev": "npx kill-port 8899 && tsx watch graphxr_mcp_server/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint 'graphxr_mcp_server/**/*.ts' 'semantic_layer/**/*.ts' 'mcp_client/**/*.ts' 'tests/**/*.ts'",
@@ -15,11 +18,12 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "duckdb": "^1.4.4",
     "express": "^4.18.2",
     "ws": "^8.16.0",
     "yaml": "^2.4.1",
-    "zod": "^3.22.4",
-    "dotenv": "^16.4.5"
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
@@ -30,9 +34,16 @@
     "@typescript-eslint/parser": "^7.0.0",
     "eslint": "^8.56.0",
     "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.3.3",
     "vitest": "^1.2.2"
   },
-  "keywords": ["graphxr", "mcp", "graph", "visualization", "agent"],
+  "keywords": [
+    "graphxr",
+    "mcp",
+    "graph",
+    "visualization",
+    "agent"
+  ],
   "license": "MIT"
 }

@@ -43,13 +43,13 @@ beforeAll(async () => {
   app.use(express.json());
 
   app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', service: 'graphxr-mcp-server', version: '1.0.0' });
+    res.json({ status: 'ok', service: 'graphxr-mcp-server', version: '0.1.0' });
   });
 
   app.get('/mcp-info', (_req, res) => {
     res.json({
       name: 'graphxr-mcp-server',
-      version: '1.0.0',
+      version: '0.1.0',
       protocol: 'mcp',
       transport: ['sse', 'stdio'],
       sseEndpoint: '/sse',

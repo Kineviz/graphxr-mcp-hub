@@ -79,7 +79,7 @@ npm run start:graphxr-mcp -- --stdio
 ```bash
 # 存活探针
 curl http://localhost:8899/health
-# → {"status":"ok","service":"graphxr-mcp-server","version":"1.0.0"}
+# → {"status":"ok","service":"graphxr-mcp-server","version":"0.1.0"}
 
 # 能力清单
 curl http://localhost:8899/mcp-info
@@ -147,17 +147,78 @@ GraphXR Agent 的 chat 页面在启动时会自动探测 `localhost:8899`：
 
 ---
 
-## 可选数据源扩展
+## 自动数据接入（内置 DuckDB）
 
-除 GraphXR MCP Server 外，本 Hub 还支持通过 `config/hub_config.yaml` 按需开启其他数据源：
+Hub 内置了 DuckDB 数据库引擎，支持 CSV、JSON、Parquet 文件的零配置自动接入。
 
-| 数据源 | 方案 | 说明 |
+### 端到端流程
+
+```
+用户 → GraphXR Agent: "帮我分析 users.csv 的用户关系" [附件: users.csv]
+
+Agent → Hub: ingest_file({ file_path: "data/users.csv" })
+Hub:  自动初始化 DuckDB → 加载文件 → 返回 schema
+
+Hub → Agent: { table: "users", columns: [{name:"id",...}], rows: 5, sample: [...] }
+
+Agent → Hub: query_data({
+  sql: "SELECT * FROM users",
+  push_to_graphxr: true,
+  transform_config: { nodeCategory: "User", idColumn: "id", targetColumn: "friend_id" }
+})
+
+Hub:  查询 → 转换为图数据 → 推送到 GraphXR → 画布渲染 ✅
+```
+
+### 数据接入工具
+
+| 工具 | 说明 |
+|---|---|
+| `ingest_file(file_path?, file_content?, format?, table_name?)` | 加载文件到内置数据库，返回 schema + 示例数据 |
+| `query_data(sql, push_to_graphxr?, transform_config?)` | 执行 SQL 查询，可选自动推送到 GraphXR |
+| `list_tables()` | 列出所有已加载的数据表 |
+
+支持的文件格式：CSV、TSV、JSON、JSONL、Parquet
+
+Agent 也可以直接传入文件内容（无需文件路径）：
+```
+ingest_file({ file_content: "id,name\n1,Alice\n2,Bob", format: "csv" })
+```
+
+---
+
+## 数据源管理
+
+### 内置数据源（随 Hub 自动启动）
+
+| 数据源 | 方案 | 状态 |
 |---|---|---|
-| CSV / JSON / Parquet | DuckDB MCP Server | `uvx mcp-server-duckdb` |
-| Neo4j / Spanner / PostgreSQL | googleapis/genai-toolbox | Go 二进制，SSE 接口 |
-| HTTP REST API | @modelcontextprotocol/server-fetch | 官方 npm 包 |
-| 本地文件系统 | @modelcontextprotocol/server-filesystem | 官方 npm 包 |
-| Oracle / DynamoDB | MCP Registry 社区 Server | 按需启用 |
+| CSV / JSON / Parquet | 内置 DuckDB（npm 包） | 自动按需初始化，零配置 |
+| Neo4j / Spanner / PostgreSQL | genai-toolbox（SSE 连接） | 默认启用，启动时自动连接 |
+
+### 按需接入数据源（通过 API 或 Agent 触发）
+
+| 数据源 | 方案 | 接入方式 |
+|---|---|---|
+| 本地文件系统 | @modelcontextprotocol/server-filesystem | `POST /sources/filesystem/connect` |
+| HTTP REST API | @modelcontextprotocol/server-fetch | `POST /sources/fetch/connect` |
+| GitHub | @modelcontextprotocol/server-github | `POST /sources/github/connect` |
+| 其他 MCP 社区 Server | MCP Registry | 在 hub_config.yaml 中添加配置 |
+
+### 数据源管理 API
+
+```bash
+# 查看所有数据源状态
+curl http://localhost:8899/sources
+
+# 按需接入某个数据源
+curl -X POST http://localhost:8899/sources/filesystem/connect
+```
+
+外部数据源的工具会自动注入到 Hub 的工具列表中，以 `{source}__{tool}` 格式命名：
+- `toolbox__neo4j-query` — genai-toolbox 的 Neo4j 查询
+- `filesystem__read_file` — 文件系统读取
+- `fetch__fetch` — HTTP 抓取
 
 ---
 
@@ -201,6 +262,106 @@ npm run lint        # ESLint
 
 ---
 
+## Docker
+
+### 构建并运行
+
+```bash
+# 构建镜像
+docker build -t graphxr-mcp-hub .
+
+# 运行容器
+docker run -d -p 8899:8899 --env-file .env graphxr-mcp-hub
+```
+
+### Docker Compose
+
+```bash
+# 仅启动 GraphXR MCP Server
+docker compose up -d
+
+# 同时启动 genai-toolbox（数据库数据源）
+docker compose --profile toolbox up -d
+
+# 验证
+curl http://localhost:8899/health
+```
+
+> **Linux 用户注意**：如需从容器内访问宿主机服务（如 GraphXR WebSocket），请添加 `--add-host=host.docker.internal:host-gateway` 或使用 `network_mode: host`。
+
+---
+
+## 数据血缘追踪
+
+所有通过 `push_graph`、`add_nodes`、`add_edges` 推送的数据会自动注入血缘元数据：
+
+```json
+{
+  "properties": {
+    "name": "Alice",
+    "_lineage": {
+      "source": "csv:data/sample.csv",
+      "operation": "push_graph",
+      "timestamp": "2026-03-26T10:00:00Z",
+      "operationId": "op_1711440000_1"
+    }
+  }
+}
+```
+
+调用工具时可通过 `source` 参数指定数据来源（如 `"csv:data/users.csv"`），系统会自动关联。
+
+---
+
+## 多客户端协作
+
+支持多个 LLM 客户端（GraphXR Agent、Claude Desktop、Codex 等）同时连接同一 MCP Server：
+
+- 每个 SSE 连接自动注册为独立会话
+- `GET /sessions` — 查看当前连接的所有客户端
+- 当一个客户端修改图时，其他客户端会感知到变更
+
+---
+
+## Web 管理 UI
+
+启动服务后访问 `http://localhost:8899/admin` 进入管理仪表盘：
+
+- 实时查看活跃会话
+- 查看数据操作血缘日志
+- 查看和编辑 `hub_config.yaml` 配置
+
+---
+
+## Kafka 实时流
+
+支持通过 Kafka WebSocket 代理实时消费消息并自动推送到 GraphXR：
+
+1. 在 `hub_config.yaml` 中启用 `kafka.enabled: true`
+2. 配置 `KAFKA_WS_URL`、topics 等参数
+3. 消息自动批量转换为图节点/边并推送
+
+---
+
+## Ollama 本地 LLM
+
+支持 Ollama 作为本地 LLM 后端连接 GraphXR MCP Server：
+
+```bash
+# 生成 Ollama MCP 客户端配置
+npx ts-node config/ollama_config.ts --model llama3
+
+# 使用 SSE 模式
+npx ts-node config/ollama_config.ts --transport sse
+
+# 自定义 Ollama 地址
+npx ts-node config/ollama_config.ts --ollama-url http://192.168.1.100:11434
+```
+
+在 `hub_config.yaml` 中启用 `ollama.enabled: true` 并配置模型和地址。
+
+---
+
 ## 目录结构
 
 ```
@@ -208,11 +369,20 @@ graphxr-mcp-hub/
 ├── graphxr_mcp_server/
 │   ├── index.ts              # MCP Server 入口（端口 8899，支持 SSE + STDIO）
 │   ├── graphxr_client.ts     # GraphXR WebSocket 桥接客户端
+│   ├── duckdb_manager.ts     # 内置 DuckDB 数据库管理器（自动初始化）
+│   ├── source_manager.ts    # 外部 MCP 数据源管理（genai-toolbox 内置 + 按需接入）
+│   ├── session_manager.ts    # 多客户端会话管理
+│   ├── discovery_client.ts   # MCP Server 自动发现客户端 SDK
+│   ├── kafka_bridge.ts       # Kafka → GraphXR 实时流桥接
+│   ├── admin_ui.ts           # Web 管理仪表盘（/admin）
 │   └── tools/
 │       ├── definitions.ts    # 所有工具的 MCP 定义（含 /mcp-info 清单）
-│       ├── push_graph.ts
-│       ├── add_nodes.ts
-│       ├── add_edges.ts
+│       ├── push_graph.ts     # （含血缘追踪）
+│       ├── add_nodes.ts      # （含血缘追踪）
+│       ├── add_edges.ts      # （含血缘追踪）
+│       ├── ingest_file.ts    # 文件接入（CSV/JSON/Parquet → DuckDB）
+│       ├── query_data.ts     # SQL 查询 + 可选推送 GraphXR
+│       ├── list_tables.ts    # 列出已加载数据表
 │       ├── update_node.ts
 │       ├── clear_graph.ts
 │       ├── get_graph_state.ts
@@ -222,23 +392,36 @@ graphxr-mcp-hub/
 ├── semantic_layer/
 │   ├── graph_schema.ts       # 统一图语义类型（Zod + TypeScript）
 │   ├── validators.ts
+│   ├── lineage.ts            # 数据血缘追踪（元数据注入 + 操作日志）
 │   └── transformers/
 │       ├── csv_transformer.ts
 │       ├── json_transformer.ts
 │       ├── neo4j_transformer.ts
-│       └── spanner_transformer.ts
+│       ├── spanner_transformer.ts
+│       └── kafka_transformer.ts  # Kafka 消息 → 图数据转换器
 ├── config/
-│   ├── hub_config.yaml       # 总控配置（端口、数据源开关）
-│   └── tools.yaml            # genai-toolbox 数据库配置
+│   ├── hub_config.yaml       # 总控配置（端口、数据源开关、Kafka、Ollama）
+│   ├── tools.yaml            # genai-toolbox 数据库配置
+│   └── ollama_config.ts      # Ollama 本地 LLM 配置生成器
 ├── data/
 │   ├── sample.csv
 │   └── sample.json
 ├── tests/
-│   ├── test_graphxr_mcp.ts   # 自动发现端点测试
-│   └── test_transformer.ts   # 数据转换器测试
+│   ├── test_graphxr_mcp.ts       # 自动发现端点测试
+│   ├── test_transformer.ts       # 数据转换器测试
+│   ├── test_duckdb_pipeline.ts   # DuckDB 集成管道测试
+│   ├── test_lineage.ts           # 数据血缘追踪测试
+│   ├── test_session_manager.ts   # 多客户端会话管理测试
+│   ├── test_discovery_client.ts  # 发现客户端测试
+│   ├── test_kafka_transformer.ts # Kafka 转换器测试
+│   ├── test_duckdb_manager.ts   # DuckDB 管理器 + 数据接入测试
+│   └── test_source_manager.ts  # 外部数据源管理测试
 ├── docs/
 │   └── project.md            # 详细项目方案文档
 ├── .env.example
+├── Dockerfile                # 多阶段 Docker 构建
+├── .dockerignore
+├── docker-compose.yml        # 一键启动（含可选 genai-toolbox）
 ├── package.json
 ├── tsconfig.json
 └── vitest.config.ts
@@ -246,4 +429,4 @@ graphxr-mcp-hub/
 
 ---
 
-*版本：v1.0.0 | 维护团队：Kineviz*
+*版本：v0.1.0 | 维护团队：Kineviz*

@@ -22,30 +22,45 @@ import {
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import * as dotenv from 'dotenv';
+import { resolve } from 'path';
 
-import { GraphXRClient } from './graphxr_client.js';
-import { pushGraph } from './tools/push_graph.js';
-import { getGraphState } from './tools/get_graph_state.js';
-import { getNodes } from './tools/get_nodes.js';
-import { getEdges } from './tools/get_edges.js';
-import { addNodes } from './tools/add_nodes.js';
-import { addEdges } from './tools/add_edges.js';
-import { updateNode } from './tools/update_node.js';
-import { findNeighbors } from './tools/find_neighbors.js';
-import { clearGraph } from './tools/clear_graph.js';
-import { ALL_TOOL_DEFINITIONS } from './tools/definitions.js';
+import { GraphXRBridge } from './graphxr_bridge';
+import { randomUUID } from 'crypto';
+
+import { pushGraph } from './tools/push_graph';
+import { getGraphState } from './tools/get_graph_state';
+import { getNodes } from './tools/get_nodes';
+import { getEdges } from './tools/get_edges';
+import { addNodes } from './tools/add_nodes';
+import { addEdges } from './tools/add_edges';
+import { updateNode } from './tools/update_node';
+import { findNeighbors } from './tools/find_neighbors';
+import { clearGraph } from './tools/clear_graph';
+import { ALL_TOOL_DEFINITIONS } from './tools/definitions';
+import { LineageTracker } from '../semantic_layer/lineage';
+import { SessionManager } from './session_manager';
+import { createAdminRouter } from './admin_ui';
+import { DuckDBManager } from './duckdb_manager';
+import { ingestFile } from './tools/ingest_file';
+import { queryData } from './tools/query_data';
+import { listTables } from './tools/list_tables';
+import { SourceManager } from './source_manager';
+import { connectSource } from './tools/connect_source';
 
 dotenv.config();
 
 const PORT = parseInt(process.env.GRAPHXR_MCP_PORT ?? '8899', 10);
-const GRAPHXR_WS_URL = process.env.GRAPHXR_WS_URL ?? 'ws://localhost:8080';
 const SERVER_NAME = 'graphxr-mcp-server';
-const SERVER_VERSION = '1.0.0';
+const SERVER_VERSION = '0.1.0';
 
 // ---------------------------------------------------------------------------
-// Shared GraphXR WebGL bridge (WebSocket connection to GraphXR web app)
+// Shared instances
 // ---------------------------------------------------------------------------
-const graphxrClient = new GraphXRClient(GRAPHXR_WS_URL);
+const graphxrBridge = new GraphXRBridge({ requestTimeoutMs: 15_000 });
+const lineageTracker = new LineageTracker();
+const sessionManager = new SessionManager();
+const duckdbManager = new DuckDBManager();
+const sourceManager = new SourceManager();
 
 // ---------------------------------------------------------------------------
 // MCP Server factory — creates a configured MCP Server instance
@@ -56,36 +71,52 @@ function createMcpServer(): Server {
     { capabilities: { tools: {} } }
   );
 
-  // List available tools
+  // List available tools (built-in + proxied from external sources)
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: ALL_TOOL_DEFINITIONS,
+    tools: [...ALL_TOOL_DEFINITIONS, ...sourceManager.getProxiedTools()],
   }));
 
   // Dispatch tool calls
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+
+    // Built-in tools
     switch (name) {
       case 'push_graph':
-        return pushGraph(graphxrClient, args);
+        return pushGraph(graphxrBridge, args, lineageTracker);
       case 'get_graph_state':
-        return getGraphState(graphxrClient, args);
+        return getGraphState(graphxrBridge, args);
       case 'get_nodes':
-        return getNodes(graphxrClient, args);
+        return getNodes(graphxrBridge, args);
       case 'get_edges':
-        return getEdges(graphxrClient, args);
+        return getEdges(graphxrBridge, args);
       case 'add_nodes':
-        return addNodes(graphxrClient, args);
+        return addNodes(graphxrBridge, args, lineageTracker);
       case 'add_edges':
-        return addEdges(graphxrClient, args);
+        return addEdges(graphxrBridge, args, lineageTracker);
       case 'update_node':
-        return updateNode(graphxrClient, args);
+        return updateNode(graphxrBridge, args);
       case 'find_neighbors':
-        return findNeighbors(graphxrClient, args);
+        return findNeighbors(graphxrBridge, args);
       case 'clear_graph':
-        return clearGraph(graphxrClient, args);
-      default:
-        throw new Error(`Unknown tool: ${name}`);
+        return clearGraph(graphxrBridge, args);
+      case 'ingest_file':
+        return ingestFile(duckdbManager, args);
+      case 'query_data':
+        return queryData(duckdbManager, graphxrBridge, args, lineageTracker);
+      case 'list_tables':
+        return listTables(duckdbManager);
+      case 'connect_source':
+        return connectSource(sourceManager, args);
     }
+
+    // Proxied tools from external MCP servers (namespaced: "toolbox__neo4j-query")
+    if (name.includes('__')) {
+      const result = await sourceManager.dispatchTool(name, (args ?? {}) as Record<string, unknown>);
+      if (result !== null) return result as { content: Array<{ type: 'text'; text: string }> };
+    }
+
+    throw new Error(`Unknown tool: ${name}`);
   });
 
   return server;
@@ -109,7 +140,38 @@ async function startHttpMode(): Promise<void> {
 
   // Allow cross-origin requests from the GraphXR web app
   app.use(cors({ origin: '*' }));
-  app.use(express.json());
+  // Parse JSON for all routes EXCEPT /messages (MCP SDK needs the raw stream)
+  app.use((req, res, next) => {
+    if (req.path === '/messages') return next();
+    express.json()(req, res, next);
+  });
+
+  // ── Smart root route ─────────────────────────────────────────────────────
+  // Browser (Accept: text/html) → redirect to admin dashboard
+  // Agent / API client → return JSON with server info + endpoint directory
+  app.get('/', (req, res) => {
+    const accept = req.headers.accept || '';
+    if (accept.includes('text/html')) {
+      return res.redirect('/admin');
+    }
+    res.json({
+      service: SERVER_NAME,
+      version: SERVER_VERSION,
+      status: 'ok',
+      endpoints: {
+        admin: '/admin',
+        health: '/health',
+        mcpInfo: '/mcp-info',
+        sse: '/sse',
+        sources: '/sources',
+        sessions: '/sessions',
+        graphxrEvents: '/graphxr/events',
+        graphxrResults: '/graphxr/results',
+        graphxrStatus: '/graphxr/status',
+        examples: '/examples/',
+      },
+    });
+  });
 
   // ── Auto-discovery endpoints ──────────────────────────────────────────────
 
@@ -144,6 +206,58 @@ async function startHttpMode(): Promise<void> {
       },
       // Signals that this server can integrate with GraphXR WebGL
       graphxrCompatible: true,
+      // GraphXR bridge connection info — GraphXR connects here
+      graphxrBridge: {
+        eventsEndpoint: '/graphxr/events',
+        resultsEndpoint: '/graphxr/results',
+        statusEndpoint: '/graphxr/status',
+        protocol: 'sse+rest',
+        description: 'Connect via SSE to receive commands, POST results back',
+      },
+    });
+  });
+
+  // ── GraphXR Bridge endpoints ──────────────────────────────────────────────
+  // GraphXR discovers the Hub, then connects via SSE to receive commands.
+  // Results are POSTed back to /graphxr/results.
+
+  app.get('/graphxr/events', (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+    res.flushHeaders();
+
+    const connectionId = randomUUID();
+    graphxrBridge.addConnection(connectionId, res, {
+      userAgent: req.headers['user-agent'],
+    });
+
+    req.on('close', () => {
+      graphxrBridge.removeConnection(connectionId);
+    });
+  });
+
+  app.post('/graphxr/results', (req, res) => {
+    const { requestId, result, error } = req.body;
+    if (!requestId) {
+      res.status(400).json({ error: 'Missing requestId' });
+      return;
+    }
+    const handled = graphxrBridge.handleResult(requestId, result, error ?? undefined);
+    if (handled) {
+      res.json({ ok: true });
+    } else {
+      res.status(404).json({ error: 'Unknown or expired requestId' });
+    }
+  });
+
+  app.get('/graphxr/status', (_req, res) => {
+    res.json({
+      connectedInstances: graphxrBridge.connectedCount,
+      pendingRequests: graphxrBridge.pendingCount,
+      connections: graphxrBridge.listConnections(),
     });
   });
 
@@ -151,19 +265,28 @@ async function startHttpMode(): Promise<void> {
   // Each GET /sse request creates a dedicated MCP Server + transport pair so
   // that multiple clients (GraphXR Agent, Claude, Codex…) can connect
   // independently and concurrently.
+  const sseTransports = new Map<string, SSEServerTransport>();
+
   app.get('/sse', async (req, res) => {
     const server = createMcpServer();
     const transport = new SSEServerTransport('/messages', res);
+    const sessionId = transport.sessionId;
+
+    // Register session for multi-client collaboration
+    sseTransports.set(sessionId, transport);
+    sessionManager.register(sessionId, transport, req.headers['user-agent']);
+
     await server.connect(transport);
 
     // Clean up when the client disconnects
     req.on('close', () => {
+      sseTransports.delete(sessionId);
+      sessionManager.unregister(sessionId);
       server.close().catch(() => {});
     });
   });
 
   // POST /messages — SSE response channel (required by MCP SSE transport)
-  const sseTransports = new Map<string, SSEServerTransport>();
   app.post('/messages', async (req, res) => {
     const sessionId = req.query['sessionId'] as string;
     const transport = sseTransports.get(sessionId);
@@ -171,14 +294,72 @@ async function startHttpMode(): Promise<void> {
       res.status(404).json({ error: 'Session not found' });
       return;
     }
+    sessionManager.touch(sessionId);
     await transport.handlePostMessage(req, res);
   });
+
+  // ── Data sources endpoint ────────────────────────────────────────────────
+  app.get('/sources', (_req, res) => {
+    res.json({ sources: sourceManager.getStatus() });
+  });
+
+  // Connect an on-demand source
+  app.post('/sources/:name/connect', async (req, res) => {
+    const { name } = req.params;
+    const connected = await sourceManager.connectByName(name);
+    res.json({ name, connected, sources: sourceManager.getStatus() });
+  });
+
+  // ── Multi-client collaboration endpoint ─────────────────────────────────
+  app.get('/sessions', (_req, res) => {
+    res.json({
+      activeSessions: sessionManager.count,
+      sessions: sessionManager.listSessions(),
+    });
+  });
+
+  // ── Examples (auto-generated index + static files) ─────────────────────
+  const examplesDir = resolve(__dirname, '..', 'examples');
+  app.get('/examples', (_req, res) => {
+    const { readdirSync } = require('fs') as typeof import('fs');
+    try {
+      const files = readdirSync(examplesDir, { withFileTypes: true })
+        .filter((f: any) => f.isFile())
+        .map((f: any) => f.name);
+      const list = files.map((f: string) => `<li><a href="/examples/${f}">${f}</a></li>`).join('\n');
+      res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Examples</title>
+<style>body{font-family:system-ui;background:#0d1117;color:#e6edf3;padding:32px}
+a{color:#58a6ff;text-decoration:none}a:hover{text-decoration:underline}
+li{margin:8px 0;font-size:1.1rem}</style></head>
+<body><h1>Examples</h1><ul>${list}</ul>
+<p style="margin-top:24px;color:#8b949e"><a href="/admin">&larr; Admin</a></p></body></html>`);
+    } catch {
+      res.status(404).send('Examples directory not found');
+    }
+  });
+  app.use('/examples', express.static(examplesDir));
+
+  // ── Web Admin UI ────────────────────────────────────────────────────────
+  app.use('/admin', createAdminRouter(sessionManager, lineageTracker, sourceManager, graphxrBridge));
+
+  // ── Initialize external data sources from config ─────────────────────────
+  sourceManager.initialize().then(() => {
+    const sources = sourceManager.getStatus();
+    const connected = sources.filter((s) => s.status === 'connected');
+    if (connected.length > 0) {
+      console.log(`[graphxr-mcp] External sources: ${connected.map((s) => `${s.name} (${s.tools.length} tools)`).join(', ')}`);
+    }
+  }).catch(() => { /* non-fatal */ });
 
   app.listen(PORT, () => {
     console.log(`[graphxr-mcp] HTTP/SSE server listening on http://localhost:${PORT}`);
     console.log(`[graphxr-mcp]   Auto-discovery: GET http://localhost:${PORT}/health`);
     console.log(`[graphxr-mcp]   MCP manifest:   GET http://localhost:${PORT}/mcp-info`);
     console.log(`[graphxr-mcp]   SSE endpoint:   GET http://localhost:${PORT}/sse`);
+    console.log(`[graphxr-mcp]   Admin UI:       GET http://localhost:${PORT}/admin`);
+    console.log(`[graphxr-mcp]   GraphXR bridge: GET http://localhost:${PORT}/graphxr/events`);
+    console.log(`[graphxr-mcp]   Examples:       GET http://localhost:${PORT}/examples/`);
+    console.log(`[graphxr-mcp]   Sources:        GET http://localhost:${PORT}/sources`);
   });
 }
 
