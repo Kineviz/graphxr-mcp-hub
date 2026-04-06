@@ -1,8 +1,19 @@
+# docker-compose.yml — Production / end-user mode
+#
+# All services run in Docker. No local Node.js or gcloud required.
+# Requires a service account key or ADC credentials file.
+#
+# Usage:
+#   # Option 1: Service account key
+#   GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json docker compose -f docker-compose.prod.yml up -d
+#
+#   # Option 2: Use .env file
+#   cp .env.example .env  # fill in values
+#   docker compose -f docker-compose.yml up -d
+
 services:
   graphxr-mcp-server:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: kineviz/graphxr-mcp-server:latest
     ports:
       - "${GRAPHXR_MCP_PORT:-8899}:8899"
     env_file:
@@ -11,9 +22,13 @@ services:
       - GRAPHXR_WS_URL=${GRAPHXR_WS_URL:-ws://host.docker.internal:8080}
       - GRAPHXR_MCP_PORT=8899
       - MCP_TRANSPORT=http
+      - GENAI_TOOLBOX_URL=http://genai-toolbox:5000/mcp/sse
     volumes:
       - ./data:/app/data
       - ./config:/app/config
+    depends_on:
+      genai-toolbox:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8899/health"]
       interval: 10s
@@ -22,17 +37,13 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # Optional: genai-toolbox for database sources (Neo4j, Spanner, PostgreSQL)
-  # Start with: docker compose --profile toolbox up -d
   genai-toolbox:
     image: us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:latest
-    profiles:
-      - toolbox
     ports:
       - "5000:5000"
     volumes:
       - ./config/tools.yaml:/app/tools.yaml:ro
-      - ${GCLOUD_ADC_PATH:-${APPDATA}/gcloud/application_default_credentials.json}:/app/adc.json:ro
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/app/adc.json:ro
     command: ["--config", "/app/tools.yaml", "--address", "0.0.0.0", "--port", "5000"]
     environment:
       - GOOGLE_APPLICATION_CREDENTIALS=/app/adc.json

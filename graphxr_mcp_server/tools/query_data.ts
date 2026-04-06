@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { DuckDBManager } from '../duckdb_manager';
 import { IGraphXRClient } from '../graphxr_bridge';
 import { csvResultToGraph } from '../../semantic_layer/transformers/csv_transformer';
-import { attachLineage, generateOperationId, LineageTracker } from '../../semantic_layer/lineage';
+import { generateOperationId, LineageTracker } from '../../semantic_layer/lineage';
 
 const QueryDataArgsSchema = z.object({
   /** SQL query to execute against loaded data. */
@@ -70,19 +70,17 @@ export async function queryData(
       timestamp: new Date().toISOString(),
       operationId,
     };
-    const tagged = attachLineage(graphData, lineage);
-
-    await graphxrClient.pushGraph(tagged);
+    await graphxrClient.pushGraph(graphData);
     lineageTracker?.record({
       ...lineage,
-      nodeCount: tagged.nodes.length,
-      edgeCount: tagged.edges.length,
+      nodeCount: graphData.nodes.length,
+      edgeCount: graphData.edges.length,
     });
 
     return {
       content: [{
         type: 'text',
-        text: `Query returned ${rowCount} row(s). Pushed to GraphXR: ${tagged.nodes.length} node(s), ${tagged.edges.length} edge(s). [${operationId}]`,
+        text: `Query returned ${rowCount} row(s). Pushed to GraphXR: ${graphData.nodes.length} node(s), ${graphData.edges.length} edge(s). [${operationId}]`,
       }],
     };
   } catch (err) {

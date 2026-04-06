@@ -5,6 +5,22 @@ export interface SourceInfo {
   status: 'disconnected' | 'connecting' | 'connected' | 'error';
   tools: string[];
   error?: string;
+  /** True if this row represents a database inside genai-toolbox */
+  isToolboxDatabase?: boolean;
+  /** Source key in tools.yaml (e.g. "spanner") */
+  toolboxSourceKey?: string;
+  /** Database kind */
+  toolboxDbKind?: DatabaseType;
+}
+
+export interface ToolboxDatabaseEntry {
+  sourceKey: string;
+  displayName: string;
+  kind: DatabaseType;
+  params: Record<string, unknown>;
+  propertyGraphEnabled: boolean;
+  graphName?: string;
+  tools: string[];
 }
 
 export interface SessionInfo {

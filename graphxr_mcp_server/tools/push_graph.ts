@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import { IGraphXRClient } from '../graphxr_bridge';
 import { GraphNodeSchema, GraphEdgeSchema } from '../../semantic_layer/graph_schema';
-import { attachLineage, generateOperationId, LineageTracker } from '../../semantic_layer/lineage';
+import { generateOperationId, LineageTracker } from '../../semantic_layer/lineage';
 
 const PushGraphArgsSchema = z.object({
   nodes: z.array(GraphNodeSchema),
@@ -27,8 +27,7 @@ export async function pushGraph(
     timestamp: new Date().toISOString(),
     operationId,
   };
-  const tagged = attachLineage({ nodes, edges }, lineage);
-  await client.pushGraph(tagged);
+  await client.pushGraph({ nodes, edges });
   lineageTracker?.record({ ...lineage, nodeCount: nodes.length, edgeCount: edges.length });
   return {
     content: [

@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import { IGraphXRClient } from '../graphxr_bridge';
 import { GraphNodeSchema } from '../../semantic_layer/graph_schema';
-import { attachLineage, generateOperationId, LineageTracker } from '../../semantic_layer/lineage';
+import { generateOperationId, LineageTracker } from '../../semantic_layer/lineage';
 
 const AddNodesArgsSchema = z.object({
   nodes: z.array(GraphNodeSchema),
@@ -26,8 +26,7 @@ export async function addNodes(
     timestamp: new Date().toISOString(),
     operationId,
   };
-  const tagged = attachLineage({ nodes, edges: [] }, lineage);
-  await client.addNodes(tagged.nodes);
+  await client.addNodes(nodes);
   lineageTracker?.record({ ...lineage, nodeCount: nodes.length, edgeCount: 0 });
   return {
     content: [

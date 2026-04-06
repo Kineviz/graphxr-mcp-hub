@@ -1,4 +1,4 @@
-import type { SourceInfo, AddSourceParams, SessionInfo, LineageEntry, RegistryResult, DatabaseTemplateParams, AdcStatus } from '../types';
+import type { SourceInfo, AddSourceParams, SessionInfo, LineageEntry, RegistryResult, DatabaseTemplateParams, AdcStatus, ToolboxDatabaseEntry } from '../types';
 
 const BASE = '/admin/api';
 
@@ -60,6 +60,36 @@ export async function connectSource(name: string): Promise<SourceInfo[]> {
 export async function disconnectSource(name: string): Promise<SourceInfo[]> {
   const data = await request<{ sources: SourceInfo[] }>(`/sources/${encodeURIComponent(name)}/disconnect`, {
     method: 'POST',
+  });
+  return data.sources;
+}
+
+// ── Toolbox Database Management ───────────────────────────────────────────
+
+export async function getToolboxDatabases(): Promise<ToolboxDatabaseEntry[]> {
+  const data = await request<{ databases: ToolboxDatabaseEntry[] }>('/toolbox/databases');
+  return data.databases;
+}
+
+export async function updateToolboxDatabase(sourceKey: string, body: Record<string, unknown>): Promise<SourceInfo[]> {
+  const data = await request<{ sources: SourceInfo[] }>(`/toolbox/databases/${encodeURIComponent(sourceKey)}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  return data.sources;
+}
+
+export async function deleteToolboxDatabase(sourceKey: string): Promise<SourceInfo[]> {
+  const data = await request<{ sources: SourceInfo[] }>(`/toolbox/databases/${encodeURIComponent(sourceKey)}`, {
+    method: 'DELETE',
+  });
+  return data.sources;
+}
+
+export async function toggleToolbox(enabled: boolean): Promise<SourceInfo[]> {
+  const data = await request<{ sources: SourceInfo[] }>('/toolbox/toggle', {
+    method: 'POST',
+    body: JSON.stringify({ enabled }),
   });
   return data.sources;
 }

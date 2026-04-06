@@ -22,6 +22,7 @@ import YAML from 'yaml';
 // ---------------------------------------------------------------------------
 
 export type SourceStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type DatabaseType = 'neo4j' | 'spanner' | 'bigquery';
 
 export interface SourceInfo {
   name: string;
@@ -30,6 +31,22 @@ export interface SourceInfo {
   status: SourceStatus;
   tools: string[];
   error?: string;
+  /** True if this row represents a database inside genai-toolbox */
+  isToolboxDatabase?: boolean;
+  /** Source key in tools.yaml (e.g. "spanner") */
+  toolboxSourceKey?: string;
+  /** Database kind */
+  toolboxDbKind?: DatabaseType;
+}
+
+export interface ToolboxDatabaseEntry {
+  sourceKey: string;
+  displayName: string;
+  kind: DatabaseType;
+  params: Record<string, unknown>;
+  propertyGraphEnabled: boolean;
+  graphName?: string;
+  tools: string[];
 }
 
 interface SourceEntry {
@@ -103,7 +120,7 @@ export class SourceManager {
 
     // Auto-connect genai-toolbox if enabled
     if (this.config.toolbox?.enabled) {
-      const url = this.config.toolbox.url ?? 'http://localhost:5000/sse';
+      const url = this.config.toolbox.url ?? 'http://localhost:5000/mcp/sse';
       await this.connectSSE('toolbox', url, this.config.toolbox.description ?? 'genai-toolbox');
     }
   }
@@ -190,6 +207,11 @@ export class SourceManager {
     // Disconnect first if in error state so we can retry
     if (existing) await this.disconnect(name);
 
+    // Handle toolbox reconnection (including sub-source names like toolbox-spanner-xxx)
+    if ((name === 'toolbox' || name.startsWith('toolbox-')) && this.config.toolbox?.enabled) {
+      return (await this.reconnectToolbox()).connected;
+    }
+
     const serverConfig = this.config.mcp_servers?.find((s) => s.name === name);
     if (!serverConfig) return false;
     if (!serverConfig.command) return false;
@@ -246,12 +268,113 @@ export class SourceManager {
     return entry.client.callTool({ name: toolName, arguments: args });
   }
 
+  // ---------------------------------------------------------------------------
+  // tools.yaml parsing — expose individual databases as logical sub-sources
+  // ---------------------------------------------------------------------------
+
+  private get toolsYamlPath(): string {
+    return resolve(process.cwd(), 'config/tools.yaml');
+  }
+
+  /** Parse tools.yaml and return individual database entries. */
+  parseToolsYaml(): ToolboxDatabaseEntry[] {
+    let parsed: { sources?: Record<string, Record<string, unknown>>; tools?: Record<string, Record<string, unknown>> };
+    try {
+      parsed = YAML.parse(readFileSync(this.toolsYamlPath, 'utf-8')) ?? {};
+    } catch {
+      return [];
+    }
+
+    const sources = parsed.sources ?? {};
+    const tools = parsed.tools ?? {};
+    const entries: ToolboxDatabaseEntry[] = [];
+
+    for (const [sourceKey, sourceConfig] of Object.entries(sources)) {
+      const kind = sourceConfig.kind as DatabaseType;
+      // Build display name: toolbox-{kind}-{identifier}
+      let identifier = '';
+      if (kind === 'spanner') identifier = (sourceConfig.project as string) ?? sourceKey;
+      else if (kind === 'bigquery') identifier = (sourceConfig.project as string) ?? sourceKey;
+      else if (kind === 'neo4j') {
+        const uri = (sourceConfig.uri as string) ?? '';
+        identifier = uri.replace(/^bolt:\/\//, '').replace(/:\d+$/, '') || sourceKey;
+      }
+      const displayName = `toolbox-${kind}-${identifier}`;
+
+      // Collect tools belonging to this source
+      const sourceTools: string[] = [];
+      let propertyGraphEnabled = false;
+      let graphName: string | undefined;
+
+      for (const [toolName, toolConfig] of Object.entries(tools)) {
+        if (toolConfig.source !== sourceKey) continue;
+        sourceTools.push(toolName);
+        const toolKind = (toolConfig.kind as string) ?? '';
+        if (toolKind.includes('list-graphs') || toolKind.includes('query-graph') ||
+            toolName.includes('list-graphs') || toolName.includes('query-graph')) {
+          propertyGraphEnabled = true;
+        }
+        if (toolConfig.statement && typeof toolConfig.statement === 'string') {
+          const match = toolConfig.statement.match(/GRAPH_TABLE\((\w+)/);
+          if (match) graphName = match[1];
+        }
+      }
+
+      // Build params (exclude 'kind')
+      const params: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(sourceConfig)) {
+        if (k !== 'kind') params[k] = v;
+      }
+
+      entries.push({ sourceKey, displayName, kind, params, propertyGraphEnabled, graphName, tools: sourceTools });
+    }
+
+    return entries;
+  }
+
   /** Get status of all sources. */
   getStatus(): SourceInfo[] {
     const result: SourceInfo[] = [];
+    const toolboxEntry = this.sources.get('toolbox');
+    const toolboxStatus: SourceStatus = toolboxEntry?.status ?? 'disconnected';
+    const toolboxError = toolboxEntry?.error;
+    const toolboxAllTools = toolboxEntry?.tools.map((t) => t.name) ?? [];
 
-    // Connected sources
+    // Expand toolbox into individual database sub-source rows
+    if (this.config.toolbox?.enabled) {
+      const databases = this.parseToolsYaml();
+      if (databases.length > 0) {
+        for (const db of databases) {
+          // Filter to only tools that toolbox actually reports (intersection)
+          const activeTools = db.tools.filter((t) => toolboxAllTools.includes(t));
+          result.push({
+            name: db.displayName,
+            description: this.buildDbDescription(db),
+            transport: 'sse',
+            status: toolboxStatus,
+            tools: activeTools,
+            error: toolboxError,
+            isToolboxDatabase: true,
+            toolboxSourceKey: db.sourceKey,
+            toolboxDbKind: db.kind,
+          });
+        }
+      } else {
+        // Toolbox enabled but no databases configured
+        result.push({
+          name: 'toolbox',
+          description: this.config.toolbox.description ?? 'genai-toolbox (no databases)',
+          transport: 'sse',
+          status: toolboxStatus,
+          tools: toolboxAllTools,
+          error: toolboxError,
+        });
+      }
+    }
+
+    // Non-toolbox connected sources
     for (const [name, entry] of this.sources) {
+      if (name === 'toolbox') continue;
       result.push({
         name,
         description: entry.description,
@@ -276,6 +399,19 @@ export class SourceManager {
     }
 
     return result;
+  }
+
+  private buildDbDescription(db: ToolboxDatabaseEntry): string {
+    switch (db.kind) {
+      case 'spanner':
+        return `Spanner: ${db.params.project}/${db.params.instance}/${db.params.database}`;
+      case 'bigquery':
+        return `BigQuery: ${db.params.project}` + (db.params.location ? ` (${db.params.location})` : '');
+      case 'neo4j':
+        return `Neo4j: ${db.params.uri}`;
+      default:
+        return `${db.kind}: ${db.sourceKey}`;
+    }
   }
 
   /** Disconnect a specific source. */
@@ -501,7 +637,7 @@ export class SourceManager {
         hubConfig.toolbox = {
           enabled: true,
           transport: 'sse',
-          url: '${GENAI_TOOLBOX_URL:-http://localhost:5000/sse}',
+          url: '${GENAI_TOOLBOX_URL:-http://localhost:5000/mcp/sse}',
           description: 'Google genai-toolbox: database sources',
         };
       }
@@ -512,7 +648,7 @@ export class SourceManager {
     }
 
     await this.disconnect('toolbox');
-    const toolboxUrl = this.config.toolbox?.url ?? 'http://localhost:5000/sse';
+    const toolboxUrl = this.config.toolbox?.url ?? 'http://localhost:5000/mcp/sse';
     await this.connectSSE('toolbox', toolboxUrl, this.config.toolbox?.description ?? 'genai-toolbox');
 
     const entry = this.sources.get('toolbox');
@@ -520,6 +656,110 @@ export class SourceManager {
       return { connected: true };
     }
     return { connected: false, error: entry?.error ?? 'Failed to connect to genai-toolbox' };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Toolbox database CRUD — edit / remove individual databases in tools.yaml
+  // ---------------------------------------------------------------------------
+
+  /** Reconnect the toolbox SSE after tools.yaml changes. */
+  async reconnectToolbox(): Promise<{ connected: boolean; error?: string }> {
+    await this.disconnect('toolbox');
+    if (!this.config.toolbox?.enabled) return { connected: false, error: 'toolbox is disabled' };
+    const url = this.config.toolbox.url ?? 'http://localhost:5000/mcp/sse';
+    await this.connectSSE('toolbox', url, this.config.toolbox.description ?? 'genai-toolbox');
+    const entry = this.sources.get('toolbox');
+    if (entry?.status === 'connected') return { connected: true };
+    return { connected: false, error: entry?.error ?? 'Failed to connect to genai-toolbox' };
+  }
+
+  /** Update an existing database source in tools.yaml, regenerate its tools, and reconnect. */
+  async updateDatabaseSource(
+    sourceKey: string,
+    dbType: DatabaseType,
+    params: Record<string, unknown>,
+  ): Promise<{ connected: boolean; error?: string }> {
+    let parsed: { sources?: Record<string, unknown>; tools?: Record<string, unknown> };
+    try {
+      parsed = YAML.parse(readFileSync(this.toolsYamlPath, 'utf-8')) ?? {};
+    } catch {
+      return { connected: false, error: 'tools.yaml not found' };
+    }
+
+    const sources = (parsed.sources ?? {}) as Record<string, Record<string, unknown>>;
+    const tools = (parsed.tools ?? {}) as Record<string, Record<string, unknown>>;
+
+    if (!sources[sourceKey]) {
+      return { connected: false, error: `Source "${sourceKey}" not found in tools.yaml` };
+    }
+
+    // Remove old tools belonging to this source
+    for (const [toolName, toolConfig] of Object.entries(tools)) {
+      if (toolConfig.source === sourceKey) delete tools[toolName];
+    }
+    // Remove old source
+    delete sources[sourceKey];
+
+    // Regenerate via generateToolsYaml (merges with remaining sources/tools)
+    const config = this.generateToolsYaml(dbType, params, { sources, tools });
+    writeFileSync(this.toolsYamlPath, YAML.stringify(config, { indent: 2 }), 'utf-8');
+
+    return this.reconnectToolbox();
+  }
+
+  /** Remove a database source from tools.yaml and reconnect. */
+  async removeDatabaseSource(sourceKey: string): Promise<{ connected: boolean; error?: string }> {
+    let parsed: { sources?: Record<string, unknown>; tools?: Record<string, unknown> };
+    try {
+      parsed = YAML.parse(readFileSync(this.toolsYamlPath, 'utf-8')) ?? {};
+    } catch {
+      return { connected: false, error: 'tools.yaml not found' };
+    }
+
+    const sources = (parsed.sources ?? {}) as Record<string, Record<string, unknown>>;
+    const tools = (parsed.tools ?? {}) as Record<string, Record<string, unknown>>;
+
+    // Remove tools belonging to this source
+    for (const [toolName, toolConfig] of Object.entries(tools)) {
+      if (toolConfig.source === sourceKey) delete tools[toolName];
+    }
+    delete sources[sourceKey];
+
+    writeFileSync(this.toolsYamlPath, YAML.stringify({ sources, tools }, { indent: 2 }), 'utf-8');
+
+    // If no sources left, optionally keep toolbox enabled but reconnect
+    if (Object.keys(sources).length === 0) {
+      await this.disconnect('toolbox');
+      return { connected: false };
+    }
+
+    return this.reconnectToolbox();
+  }
+
+  /** Enable or disable the toolbox in hub_config.yaml. */
+  async setToolboxEnabled(enabled: boolean): Promise<void> {
+    try {
+      const raw = readFileSync(this.configPath, 'utf-8');
+      const hubConfig = YAML.parse(raw) ?? {};
+      if (hubConfig.toolbox) {
+        hubConfig.toolbox.enabled = enabled;
+      } else {
+        hubConfig.toolbox = {
+          enabled,
+          transport: 'sse',
+          url: '${GENAI_TOOLBOX_URL:-http://localhost:5000/mcp/sse}',
+          description: 'Google genai-toolbox: database sources',
+        };
+      }
+      writeFileSync(this.configPath, YAML.stringify(hubConfig, { indent: 2 }), 'utf-8');
+      this.loadConfig();
+    } catch { /* best-effort */ }
+
+    if (enabled) {
+      await this.reconnectToolbox();
+    } else {
+      await this.disconnect('toolbox');
+    }
   }
 
   /** Persist current mcp_servers config back to hub_config.yaml. */

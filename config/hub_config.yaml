@@ -13,9 +13,9 @@ duckdb:
     - ":memory:"
   description: CSV/JSON/Parquet 文件 SQL 查询（支持本地文件和 S3）
 toolbox:
-  enabled: false
+  enabled: true
   transport: sse
-  url: ${GENAI_TOOLBOX_URL:-http://localhost:5000/sse}
+  url: ${GENAI_TOOLBOX_URL:-http://localhost:5000/mcp/sse}
   tools_file: config/tools.yaml
   description: Google genai-toolbox：Neo4j / Spanner / PostgreSQL / BigQuery 等
 kafka:
@@ -39,10 +39,9 @@ ollama:
 mcp_servers:
   - name: fetch
     enabled: true
-    command: npx
+    command: uvx
     args:
-      - -y
-      - "@modelcontextprotocol/server-fetch"
+      - mcp-server-fetch
     description: HTTP REST API 抓取（按需接入）
   - name: github
     enabled: false

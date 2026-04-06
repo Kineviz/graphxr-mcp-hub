@@ -1,14 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Table, Tag, Button, Form, Input, Select, Switch, Popconfirm, Space, Statistic, Alert,
-  Row, Col, Card, message, Tabs, Typography, Tooltip, Popover, Spin, List, Empty, theme,
+  Row, Col, Card, message, Tabs, Typography, Tooltip, Popover, Spin, List, Empty, theme, Modal,
 } from 'antd';
 import {
   ReloadOutlined, PlusOutlined, LinkOutlined, DisconnectOutlined,
   DeleteOutlined, DownloadOutlined, SearchOutlined, DatabaseOutlined,
-  CheckCircleOutlined, CloseCircleOutlined,
+  CheckCircleOutlined, CloseCircleOutlined, EditOutlined,
 } from '@ant-design/icons';
-import type { SourceInfo, AddSourceParams, RegistryResult, DatabaseType, DatabaseTemplateParams, AdcStatus } from '../types';
+import type { SourceInfo, AddSourceParams, RegistryResult, DatabaseType, DatabaseTemplateParams, AdcStatus, ToolboxDatabaseEntry } from '../types';
 import { usePolling } from '../hooks/usePolling';
 import * as api from '../api/client';
 
@@ -98,6 +98,13 @@ export default function SourcesPage() {
   const [adcStatus, setAdcStatus] = useState<AdcStatus | null>(null);
   const [graphToggles, setGraphToggles] = useState<Record<string, boolean>>({});
 
+  // Toolbox edit modal state
+  const [editingDb, setEditingDb] = useState<ToolboxDatabaseEntry | null>(null);
+  const [editForm] = Form.useForm();
+  const [editSaving, setEditSaving] = useState(false);
+  const [editGraphToggle, setEditGraphToggle] = useState(false);
+  const [toolboxEnabled, setToolboxEnabled] = useState(true);
+
   useEffect(() => {
     api.getAdcStatus().then(setAdcStatus).catch(() => setAdcStatus({ available: false }));
   }, []);
@@ -110,6 +117,14 @@ export default function SourcesPage() {
   const { data: sources, loading, refresh } = usePolling(fetchSources, 10000);
   const list = sources ?? [];
   const connected = list.filter((s) => s.status === 'connected').length;
+
+  // Derive toolbox enabled state from sources
+  useEffect(() => {
+    if (sources) {
+      const hasToolbox = sources.some((s) => s.isToolboxDatabase || s.name === 'toolbox');
+      setToolboxEnabled(hasToolbox);
+    }
+  }, [sources]);
 
   // ── Source actions ──────────────────────────────────────────────────
 
@@ -157,6 +172,60 @@ export default function SourcesPage() {
     finally { setInstalling(null); }
   };
 
+  // ── Toolbox database actions ────────────────────────────────────────
+
+  const handleEditDb = (record: SourceInfo) => {
+    // Find the database entry from toolbox
+    api.getToolboxDatabases().then((databases) => {
+      const db = databases.find((d) => d.sourceKey === record.toolboxSourceKey);
+      if (db) {
+        setEditingDb(db);
+        setEditGraphToggle(db.propertyGraphEnabled);
+        editForm.setFieldsValue({
+          ...db.params,
+          enablePropertyGraph: db.propertyGraphEnabled,
+          graphName: db.graphName,
+        });
+      }
+    });
+  };
+
+  const handleEditSave = async () => {
+    if (!editingDb) return;
+    setEditSaving(true);
+    try {
+      const values = await editForm.validateFields();
+      await api.updateToolboxDatabase(editingDb.sourceKey, { kind: editingDb.kind, ...values });
+      message.success(`Updated: ${editingDb.displayName}`);
+      setEditingDb(null);
+      refresh();
+    } catch (err) {
+      if (err instanceof Error) message.error(`Failed: ${err.message}`);
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleDeleteDb = async (sourceKey: string) => {
+    try {
+      await api.deleteToolboxDatabase(sourceKey);
+      message.success(`Removed database: ${sourceKey}`);
+      refresh();
+    } catch {
+      message.error(`Failed to remove: ${sourceKey}`);
+    }
+  };
+
+  const handleToggleToolbox = async (enabled: boolean) => {
+    try {
+      await api.toggleToolbox(enabled);
+      message.success(enabled ? 'Toolbox enabled' : 'Toolbox disabled');
+      refresh();
+    } catch {
+      message.error('Failed to toggle toolbox');
+    }
+  };
+
   // ── Database template actions ──────────────────────────────────────
 
   const handleAddDatabase = async (template: TemplateConfig, values: Record<string, unknown>) => {
@@ -177,6 +246,8 @@ export default function SourcesPage() {
 
   const statusOrder: Record<string, number> = { connected: 0, connecting: 1, error: 2, disconnected: 3 };
 
+  const dbColorMap: Record<string, string> = { neo4j: '#018BFF', spanner: '#4285F4', bigquery: '#669DF6' };
+
   const columns = [
     {
       title: 'Name',
@@ -185,7 +256,14 @@ export default function SourcesPage() {
       sorter: (a: SourceInfo, b: SourceInfo) => a.name.localeCompare(b.name),
       render: (name: string, record: SourceInfo) => (
         <div>
-          <Text strong>{name}</Text>
+          <Space size={4}>
+            {record.isToolboxDatabase && record.toolboxDbKind && (
+              <Tag color={dbColorMap[record.toolboxDbKind] ?? 'blue'} style={{ fontSize: 11 }}>
+                <DatabaseOutlined /> {record.toolboxDbKind}
+              </Tag>
+            )}
+            <Text strong>{name}</Text>
+          </Space>
           {record.description && (
             <Typography.Paragraph
               type="secondary"
@@ -258,9 +336,14 @@ export default function SourcesPage() {
     {
       title: 'Actions',
       key: 'actions',
-      width: 200,
+      width: 240,
       render: (_: unknown, record: SourceInfo) => (
         <Space size="small">
+          {record.isToolboxDatabase && (
+            <Button size="small" icon={<EditOutlined />} onClick={() => handleEditDb(record)}>
+              Edit
+            </Button>
+          )}
           {record.status === 'connected' ? (
             <Button size="small" icon={<DisconnectOutlined />} danger onClick={() => handleDisconnect(record.name)}>
               Disconnect
@@ -270,9 +353,19 @@ export default function SourcesPage() {
               Connect
             </Button>
           )}
-          <Popconfirm title={`Remove "${record.name}"?`} onConfirm={() => handleRemove(record.name)}>
-            <Button size="small" icon={<DeleteOutlined />} danger />
-          </Popconfirm>
+          {record.isToolboxDatabase ? (
+            <Popconfirm
+              title={`Remove "${record.toolboxSourceKey}" database from toolbox?`}
+              description="This will remove the database and its tools from the toolbox configuration."
+              onConfirm={() => handleDeleteDb(record.toolboxSourceKey!)}
+            >
+              <Button size="small" icon={<DeleteOutlined />} danger />
+            </Popconfirm>
+          ) : (
+            <Popconfirm title={`Remove "${record.name}"?`} onConfirm={() => handleRemove(record.name)}>
+              <Button size="small" icon={<DeleteOutlined />} danger />
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -281,10 +374,25 @@ export default function SourcesPage() {
   return (
     <div>
       {/* Header */}
-      <Row gutter={16} style={{ marginBottom: 16 }}>
+      <Row gutter={16} style={{ marginBottom: 16 }} align="middle">
         <Col>
           <Card size="small">
             <Statistic title="Connected" value={connected} suffix={`/ ${list.length}`} valueStyle={{ color: token.colorPrimary }} />
+          </Card>
+        </Col>
+        <Col>
+          <Card size="small">
+            <Space>
+              <DatabaseOutlined style={{ color: token.colorPrimary }} />
+              <Text>Toolbox</Text>
+              <Switch
+                checked={toolboxEnabled}
+                onChange={handleToggleToolbox}
+                checkedChildren="ON"
+                unCheckedChildren="OFF"
+                size="small"
+              />
+            </Space>
           </Card>
         </Col>
         <Col flex="auto" style={{ textAlign: 'right', paddingTop: 12 }}>
@@ -302,6 +410,56 @@ export default function SourcesPage() {
         size="small"
         style={{ marginBottom: 24 }}
       />
+
+      {/* Edit Database Modal */}
+      <Modal
+        title={editingDb ? `Edit ${editingDb.kind} — ${editingDb.sourceKey}` : 'Edit Database'}
+        open={!!editingDb}
+        onOk={handleEditSave}
+        onCancel={() => setEditingDb(null)}
+        confirmLoading={editSaving}
+        okText="Save & Reconnect"
+        destroyOnClose
+      >
+        {editingDb && (() => {
+          const tpl = TEMPLATES.find((t) => t.type === editingDb.kind);
+          if (!tpl) return <Text type="secondary">Unknown database type</Text>;
+          return (
+            <Form form={editForm} layout="vertical" preserve={false}>
+              {tpl.fields.map((field) => {
+                if (field.showWhen && !editGraphToggle) return null;
+                return (
+                  <Form.Item
+                    key={field.name}
+                    name={field.name}
+                    label={field.type !== 'switch' ? field.label : undefined}
+                    valuePropName={field.type === 'switch' ? 'checked' : 'value'}
+                    rules={field.required ? [{ required: true, message: `${field.label} is required` }] : []}
+                  >
+                    {field.type === 'password' ? (
+                      <Input.Password placeholder={field.placeholder} />
+                    ) : field.type === 'select' ? (
+                      <Select placeholder={field.placeholder}>
+                        {field.options?.map((opt) => (
+                          <Select.Option key={opt.value} value={opt.value}>{opt.label}</Select.Option>
+                        ))}
+                      </Select>
+                    ) : field.type === 'switch' ? (
+                      <Switch
+                        checkedChildren={field.label}
+                        unCheckedChildren={field.label}
+                        onChange={(checked) => setEditGraphToggle(checked)}
+                      />
+                    ) : (
+                      <Input placeholder={field.placeholder} />
+                    )}
+                  </Form.Item>
+                );
+              })}
+            </Form>
+          );
+        })()}
+      </Modal>
 
       {/* Add Source + Registry */}
       <Tabs
@@ -343,7 +501,7 @@ export default function SourcesPage() {
                     ) : (
                       <Col xs={24} sm={24} lg={10}>
                         <Form.Item name="url" label="URL">
-                          <Input placeholder="http://localhost:5000/sse" />
+                          <Input placeholder="http://localhost:5000/mcp/sse" />
                         </Form.Item>
                       </Col>
                     )}

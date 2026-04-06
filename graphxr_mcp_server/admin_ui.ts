@@ -201,8 +201,45 @@ export function createAdminRouter(
 
   router.post('/api/sources/:name/disconnect', async (req, res) => {
     if (!sourceManager) { res.status(500).json({ error: 'SourceManager not available' }); return; }
-    await sourceManager.disconnect(req.params.name);
+    // For toolbox sub-sources, disconnect the entire toolbox
+    if (req.params.name.startsWith('toolbox')) {
+      await sourceManager.disconnect('toolbox');
+    } else {
+      await sourceManager.disconnect(req.params.name);
+    }
     res.json({ name: req.params.name, disconnected: true, sources: sourceManager.getStatus() });
+  });
+
+  // ── Toolbox Database Management API ────────────────────────────────────
+
+  router.get('/api/toolbox/databases', (_req, res) => {
+    if (!sourceManager) { res.status(500).json({ error: 'SourceManager not available' }); return; }
+    res.json({ databases: sourceManager.parseToolsYaml() });
+  });
+
+  router.put('/api/toolbox/databases/:key', async (req, res) => {
+    if (!sourceManager) { res.status(500).json({ error: 'SourceManager not available' }); return; }
+    const { kind, ...params } = req.body;
+    if (!kind || !['neo4j', 'spanner', 'bigquery'].includes(kind)) {
+      res.status(400).json({ error: 'kind must be one of: neo4j, spanner, bigquery' });
+      return;
+    }
+    const result = await sourceManager.updateDatabaseSource(req.params.key, kind, params);
+    res.json({ sourceKey: req.params.key, ...result, sources: sourceManager.getStatus() });
+  });
+
+  router.delete('/api/toolbox/databases/:key', async (req, res) => {
+    if (!sourceManager) { res.status(500).json({ error: 'SourceManager not available' }); return; }
+    const result = await sourceManager.removeDatabaseSource(req.params.key);
+    res.json({ removed: req.params.key, ...result, sources: sourceManager.getStatus() });
+  });
+
+  router.post('/api/toolbox/toggle', async (req, res) => {
+    if (!sourceManager) { res.status(500).json({ error: 'SourceManager not available' }); return; }
+    const { enabled } = req.body;
+    if (typeof enabled !== 'boolean') { res.status(400).json({ error: 'enabled must be a boolean' }); return; }
+    await sourceManager.setToolboxEnabled(enabled);
+    res.json({ enabled, sources: sourceManager.getStatus() });
   });
 
   // ── MCP Registry Search API ────────────────────────────────────────────

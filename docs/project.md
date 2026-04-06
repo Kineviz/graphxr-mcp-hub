@@ -29,7 +29,7 @@
 | GraphXR MCP Server 的默认端口？ | **`localhost:8899`**（不是 3100） |
 | Agent 如何连接 MCP Server？ | 前端**自动探测**端口 8899 的 `/health` + `/mcp-info`，确认后**可选**连接 |
 | Claude/Codex 是否必须连接？ | **可选**，通过标准 MCP 协议（SSE 或 STDIO）连接同一端口 |
-| graphxr_mcp_server 是否需要双向支持？ | **是**（见 §3.3），支持推送图数据和查询当前图状态 |
+| graphxr_mcp_server 是否需要双向支持？ | **是**（见 §3.3），通过 SSE+REST 被动桥接实现推送和查询 |
 | MCP Hub 是否需要 AI 调用支持？ | **是**，所有数据源均通过 MCP Tools 协议暴露，供 LLM/Agent 直接调用 |
 | CSV/JSON 数据源如何接入？ | **通过 DuckDB MCP Server**（genai-toolbox 不支持文件类数据源） |
 
@@ -104,23 +104,26 @@
 │  ┌───────────────────────┐    ┌──────────────────────────────────┐  │
 │  │  GraphXR WebGL 图     │◄──►│  GraphXR Agent Chat 页面         │  │
 │  │  （知识图谱可视化）    │    │  （LLM 驱动的对话式图分析）      │  │
-│  └───────────────────────┘    └────────────────┬─────────────────┘  │
-└────────────────────────────────────────────────┼────────────────────┘
-                                                  │ 自动发现（可选连接）
-                          ┌───────────────────────▼──────────────────────┐
-                          │   GraphXR MCP Server  (localhost:8899)        │
-                          │                                               │
-                          │   GET /health     → 存活探针（自动发现）      │
-                          │   GET /mcp-info   → 能力清单 + 工具列表       │
-                          │   GET /sse        → SSE MCP 传输通道          │
-                          │   --stdio         → STDIO 传输通道            │
-                          └────────────────────┬──────────────────────────┘
-                                               │ WebSocket
-                          ┌────────────────────▼──────────────────────────┐
-                          │  GraphXR WebGL 桥接层（双向）                  │
-                          │  推送: push_graph / add_nodes / add_edges      │
-                          │  查询: get_graph_state / get_nodes / ...       │
-                          └───────────────────────────────────────────────┘
+│  └───────────┬───────────┘    └────────────────┬─────────────────┘  │
+│              │ 自动发现 Hub                     │ 自动发现 Hub        │
+│              │ GET /graphxr/events (SSE)        │ GET /sse (MCP SSE)  │
+│              │ POST /graphxr/results            │ POST /messages      │
+└──────────────┼─────────────────────────────────┼────────────────────┘
+               │                                  │
+               ▼                                  ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│   GraphXR MCP Hub  (localhost:8899)                                   │
+│                                                                       │
+│   GET  /health          → 存活探针（自动发现）                        │
+│   GET  /mcp-info        → 能力清单 + 工具列表 + 桥接端点              │
+│   GET  /sse             → SSE MCP 传输通道（LLM Agent / Agent Chat）  │
+│   POST /messages        → MCP 消息通道                                │
+│   GET  /graphxr/events  → SSE 命令推送通道（GraphXR WebGL 桥接）      │
+│   POST /graphxr/results → REST 结果回传通道（GraphXR WebGL 桥接）     │
+│   GET  /graphxr/status  → 桥接连接状态                                │
+│   GET  /admin           → Web 管理 UI                                 │
+│   --stdio               → STDIO 传输通道（Claude Desktop 等）         │
+└──────────────────────────────────────────────────────────────────────┘
 
 外部 LLM 客户端（可选，均通过标准 MCP 协议连接）
   • Claude Desktop  → STDIO（--stdio 模式）或 SSE
@@ -129,9 +132,11 @@
 ```
 
 **架构要点：**
+- **连接方向反转**：GraphXR WebGL **主动发现并连接** Hub（而非 Hub 连接 GraphXR），消除启动顺序依赖
 - GraphXR Agent 是**浏览器内的 chat 页面**，不是独立的后端服务
 - GraphXR MCP Server 是独立进程，运行在宿主机的 `localhost:8899`
 - 前端通过**自动发现**（轮询 `/health` 和 `/mcp-info`）决定是否提示用户连接，**连接始终可选**
+- **全链路 SSE + REST**：LLM → Hub 和 Hub → GraphXR 均采用 SSE + REST，协议模式一致
 - Claude、Codex 等外部 LLM 客户端也可以连接同一端口，与 GraphXR Agent 并行使用
 
 ### 3.2 数据流全景
@@ -161,16 +166,45 @@ MCP Client（GraphXR Agent 前端 / Claude Desktop / Codex 等）
          ├─► get_graph_state()   查询当前图状态（反馈给 Agent/LLM）
          ├─► add_nodes() / add_edges()   增量追加
          └─► clear_graph()       清空画布
-         │ WebSocket
+         │ SSE（GET /graphxr/events）+ REST（POST /graphxr/results）
          ▼
    GraphXR WebGL 实时展示 ✅
 ```
 
-### 3.3 GraphXR MCP Server 双向支持详解
+### 3.3 GraphXR 桥接层详解（SSE + REST，被动模式）
 
-GraphXR Agent（Node.js）需要与 GraphXR 进行**双向交互**，因此 `graphxr_mcp_server` 必须同时支持：
+Hub 与 GraphXR WebGL 之间采用 **SSE + REST** 被动桥接（`GraphXRBridge`），替代了早期的 WebSocket 主动连接方案。
+
+#### 通信协议
+
+```
+GraphXR WebGL                          MCP Hub (:8899)
+     │                                      │
+     ├── GET /graphxr/events (SSE) ────────►│  订阅命令流
+     │◄── event: command {requestId,        │  Hub 推送命令
+     │         method, params}              │
+     │                                      │
+     ├── POST /graphxr/results ────────────►│  回传执行结果
+     │   {requestId, result?, error?}       │
+     │                                      │
+     ├── event: heartbeat ◄─────────────────│  30s 心跳保活
+     └──────────────────────────────────────┘
+```
+
+**为什么用 SSE + REST 替代 WebSocket：**
+
+| 维度 | WebSocket（旧） | SSE + REST（新） |
+|---|---|---|
+| 连接方向 | Hub 主动连接 GraphXR（需要 `GRAPHXR_WS_URL`） | GraphXR 主动连接 Hub（自动发现，零配置） |
+| 启动依赖 | Hub 依赖 GraphXR 先启动 | Hub 独立运行，GraphXR 随时接入/断开 |
+| 浏览器兼容 | 需要 WebSocket 升级握手 | `EventSource` 原生支持，自动重连 |
+| 协议一致性 | MCP 用 SSE，桥接用 WS，两套协议 | 全链路 SSE + REST，一致的通信范式 |
+| 代理/CDN | WebSocket 需要特殊配置 | 标准 HTTP，代理/CORS 处理简单 |
+| 多实例 | 单连接 | 支持多个 GraphXR 实例同时连接（广播） |
 
 #### 推送方向（Agent → GraphXR）
+
+MCP 工具被调用时，Hub 通过 SSE `command` 事件推送到 GraphXR：
 
 | 工具 | 说明 |
 |---|---|
@@ -181,6 +215,8 @@ GraphXR Agent（Node.js）需要与 GraphXR 进行**双向交互**，因此 `gra
 | `clear_graph()` | 清空当前图 |
 
 #### 查询方向（Agent ← GraphXR）
+
+Hub 通过 SSE 推送查询命令，GraphXR 执行后通过 `POST /graphxr/results` 回传结果：
 
 | 工具 | 说明 |
 |---|---|
@@ -194,14 +230,14 @@ GraphXR Agent（Node.js）需要与 GraphXR 进行**双向交互**，因此 `gra
 ```
 Agent 执行推理：
   "把 CSV 用户数据和 Neo4j 关系合并展示"
-           ↓ push_graph()
+           ↓ push_graph()（SSE command 事件）
        GraphXR 展示图  
   
 用户在 GraphXR 中选中几个节点后说：
   "分析我选中的这些节点的共同特征"
-           ↓ get_graph_state() / get_nodes()
+           ↓ get_graph_state() / get_nodes()（SSE command → POST results）
   Agent 读取当前图状态，基于现有图继续推理
-           ↓ add_edges()
+           ↓ add_edges()（SSE command 事件）
   Agent 追加分析结果到图中
 ```
 
@@ -221,11 +257,13 @@ GraphXR Agent 的 chat 页面在初始化时自动执行以下发现流程：
 
 2. GET http://localhost:8899/mcp-info
    → 检查 graphxrCompatible === true
+   → 读取 graphxrBridge.eventsEndpoint / resultsEndpoint
    → 展示工具列表，提示用户可选连接
 
-3. 用户确认连接后
-   → 建立 SSE 连接到 http://localhost:8899/sse
-   → Agent 即可调用所有 MCP 工具（push_graph、get_nodes 等）
+3. 用户确认连接后（两条通道并行建立）
+   a) MCP 通道：GET /sse → Agent Chat 调用 MCP 工具
+   b) 桥接通道：GET /graphxr/events (SSE) → GraphXR WebGL 接收命令
+      GraphXR 执行命令后 POST /graphxr/results 回传结果
 ```
 
 连接始终是**可选的**——如果端口 8899 没有响应，Agent 正常工作，不受影响。
@@ -285,7 +323,7 @@ GraphXR Agent 的 chat 页面在初始化时自动执行以下发现流程：
 
 | 组件 | 语言 | 说明 |
 |---|---|---|
-| `graphxr_mcp_server` | **Node.js / TypeScript** | MCP Server 主体，端口 8899，SSE + STDIO 双模式 |
+| `graphxr_mcp_server` | **Node.js / TypeScript** | MCP Server 主体，端口 8899，SSE + STDIO 双模式，GraphXR 桥接（SSE+REST 被动模式） |
 | `semantic_layer` | **Node.js / TypeScript** | 统一图语义类型 + 数据转换器 |
 | `genai-toolbox` | Go 二进制 | Google 官方，独立进程，SSE 接口 |
 | `mcp-server-duckdb` | Python（uvx/pip） | 独立进程，STDIO 接口 |
@@ -418,7 +456,8 @@ graphxr-mcp-hub/
 │
 ├── graphxr_mcp_server/                     # ⭐ 唯一自实现的 MCP Server（Node.js/TS）
 │   ├── index.ts                            # MCP Server 入口（端口 8899，SSE + STDIO 双模式）
-│   ├── graphxr_client.ts                   # GraphXR WebSocket 桥接客户端
+│   ├── graphxr_bridge.ts                   # GraphXR SSE+REST 被动桥接层（替代 WebSocket）
+│   ├── graphxr_client.ts                   # [已废弃] 旧版 WebSocket 客户端，将在 v0.2.0 移除
 │   └── tools/
 │       ├── definitions.ts                  # 所有工具的 MCP 定义（含 /mcp-info 清单）
 │       ├── push_graph.ts                   # 推送完整图数据到 GraphXR WebGL
@@ -503,10 +542,10 @@ mcp_servers:
 
 # D. GraphXR MCP Server（本仓库实现）
 # 默认端口 8899 — GraphXR Agent 前端自动探测此端口
+# 无需配置 GraphXR 地址：GraphXR 主动连接 Hub（SSE 被动模式）
 graphxr_mcp_server:
   enabled: true
   port: 8899
-  graphxr_ws_url: "${GRAPHXR_WS_URL:-ws://localhost:8080}"
 ```
 
 ### 8.2 tools.yaml（genai-toolbox 数据库配置）
@@ -637,7 +676,7 @@ cd graphxr-mcp-hub
 
 # 2. 配置环境变量
 cp .env.example .env
-# 主要参数：GRAPHXR_MCP_PORT（默认 8899）、GRAPHXR_WS_URL
+# 主要参数：GRAPHXR_MCP_PORT（默认 8899）
 
 # 3. 安装 Node.js 依赖
 npm install
@@ -701,4 +740,4 @@ npm run build
 
 ---
 
-*文档版本：v0.1.0 | 更新日期：2026-03-26 | 维护团队：Kineviz*
+*文档版本：v0.2.0 | 更新日期：2026-04-06 | 维护团队：Kineviz*
