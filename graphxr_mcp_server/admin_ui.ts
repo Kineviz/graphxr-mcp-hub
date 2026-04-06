@@ -83,13 +83,19 @@ export function createAdminRouter(
     }
 
     // Check for gcloud ADC (application_default_credentials.json)
-    const adcPath = join(
-      process.env.CLOUDSDK_CONFIG || join(homedir(), '.config', 'gcloud'),
-      'application_default_credentials.json',
-    );
-    if (existsSync(adcPath)) {
-      res.json({ available: true, method: 'gcloud-adc', detail: adcPath });
-      return;
+    // Windows: %APPDATA%/gcloud/  Linux/Mac: ~/.config/gcloud/
+    const adcCandidates = [
+      process.env.CLOUDSDK_CONFIG,
+      process.env.APPDATA ? join(process.env.APPDATA, 'gcloud') : undefined,
+      join(homedir(), '.config', 'gcloud'),
+    ].filter(Boolean) as string[];
+
+    for (const dir of adcCandidates) {
+      const adcPath = join(dir, 'application_default_credentials.json');
+      if (existsSync(adcPath)) {
+        res.json({ available: true, method: 'gcloud-adc', detail: adcPath });
+        return;
+      }
     }
 
     // Check for GCE metadata server (running on GCP)
