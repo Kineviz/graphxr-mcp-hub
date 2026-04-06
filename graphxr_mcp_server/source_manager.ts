@@ -184,7 +184,11 @@ export class SourceManager {
    * Looks up the server in hub_config.yaml's mcp_servers list.
    */
   async connectByName(name: string): Promise<boolean> {
-    if (this.sources.has(name)) return this.sources.get(name)!.status === 'connected';
+    const existing = this.sources.get(name);
+    if (existing?.status === 'connected') return true;
+
+    // Disconnect first if in error state so we can retry
+    if (existing) await this.disconnect(name);
 
     const serverConfig = this.config.mcp_servers?.find((s) => s.name === name);
     if (!serverConfig) return false;
@@ -358,6 +362,144 @@ export class SourceManager {
       this.config.mcp_servers = this.config.mcp_servers.filter((s) => s.name !== name);
       this.saveConfig();
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Database template support — generate tools.yaml for genai-toolbox
+  // ---------------------------------------------------------------------------
+
+  generateToolsYaml(
+    dbType: 'neo4j' | 'spanner' | 'bigquery',
+    params: Record<string, unknown>,
+    existing?: { sources: Record<string, Record<string, unknown>>; tools: Record<string, Record<string, unknown>> },
+  ): { sources: Record<string, Record<string, unknown>>; tools: Record<string, Record<string, unknown>> } {
+    const sources = { ...(existing?.sources ?? {}) };
+    const tools = { ...(existing?.tools ?? {}) };
+
+    switch (dbType) {
+      case 'neo4j':
+        sources['neo4j'] = {
+          kind: 'neo4j',
+          uri: params.uri as string,
+          user: params.user as string,
+          password: params.password as string,
+        };
+        tools['neo4j-execute-cypher'] = {
+          kind: 'neo4j-execute-cypher',
+          source: 'neo4j',
+          description: 'Execute Cypher queries on Neo4j graph database',
+        };
+        tools['neo4j-schema'] = {
+          kind: 'neo4j-schema',
+          source: 'neo4j',
+          description: 'Extract schema from Neo4j database',
+        };
+        break;
+
+      case 'spanner':
+        sources['spanner'] = {
+          kind: 'spanner',
+          project: params.project as string,
+          instance: params.instance as string,
+          database: params.database as string,
+          ...(params.dialect ? { dialect: params.dialect as string } : {}),
+        };
+        tools['spanner-execute-sql'] = {
+          kind: 'spanner-execute-sql',
+          source: 'spanner',
+          description: 'Execute SQL queries on Google Cloud Spanner',
+        };
+        tools['spanner-list-tables'] = {
+          kind: 'spanner-list-tables',
+          source: 'spanner',
+          description: 'List tables in Spanner database',
+        };
+        tools['spanner-list-graphs'] = {
+          kind: 'spanner-list-graphs',
+          source: 'spanner',
+          description: 'List property graphs in Spanner database',
+        };
+        break;
+
+      case 'bigquery': {
+        const allowedDatasets = params.allowedDatasets
+          ? (params.allowedDatasets as string).split(',').map((s: string) => s.trim()).filter(Boolean)
+          : undefined;
+        sources['bigquery'] = {
+          kind: 'bigquery',
+          project: params.project as string,
+          ...(params.location ? { location: params.location as string } : {}),
+          ...(allowedDatasets ? { allowedDatasets } : {}),
+        };
+        tools['bigquery-execute-sql'] = {
+          kind: 'bigquery-execute-sql',
+          source: 'bigquery',
+          description: 'Execute SQL queries on BigQuery',
+        };
+        tools['bigquery-conversational-analytics'] = {
+          kind: 'bigquery-conversational-analytics',
+          source: 'bigquery',
+          description: 'Conversational analytics on BigQuery datasets',
+        };
+        tools['bigquery-get-dataset-info'] = {
+          kind: 'bigquery-get-dataset-info',
+          source: 'bigquery',
+          description: 'Get BigQuery dataset metadata',
+        };
+        tools['bigquery-list-dataset-ids'] = {
+          kind: 'bigquery-list-dataset-ids',
+          source: 'bigquery',
+          description: 'List BigQuery dataset IDs',
+        };
+        break;
+      }
+    }
+
+    return { sources, tools };
+  }
+
+  async addDatabaseSource(
+    dbType: 'neo4j' | 'spanner' | 'bigquery',
+    params: Record<string, unknown>,
+  ): Promise<{ connected: boolean; error?: string }> {
+    const toolsPath = resolve(process.cwd(), 'config/tools.yaml');
+    let existing: { sources: Record<string, Record<string, unknown>>; tools: Record<string, Record<string, unknown>> } | undefined;
+    try {
+      const raw = readFileSync(toolsPath, 'utf-8');
+      existing = YAML.parse(raw) ?? undefined;
+    } catch { /* first time */ }
+
+    const config = this.generateToolsYaml(dbType, params, existing);
+    writeFileSync(toolsPath, YAML.stringify(config, { indent: 2 }), 'utf-8');
+
+    try {
+      const hubRaw = readFileSync(this.configPath, 'utf-8');
+      const hubConfig = YAML.parse(hubRaw) ?? {};
+      if (hubConfig.toolbox) {
+        hubConfig.toolbox.enabled = true;
+      } else {
+        hubConfig.toolbox = {
+          enabled: true,
+          transport: 'sse',
+          url: '${GENAI_TOOLBOX_URL:-http://localhost:5000/sse}',
+          description: 'Google genai-toolbox: database sources',
+        };
+      }
+      writeFileSync(this.configPath, YAML.stringify(hubConfig, { indent: 2 }), 'utf-8');
+      this.loadConfig();
+    } catch (err) {
+      return { connected: false, error: `Failed to update hub_config.yaml: ${err}` };
+    }
+
+    await this.disconnect('toolbox');
+    const toolboxUrl = this.config.toolbox?.url ?? 'http://localhost:5000/sse';
+    await this.connectSSE('toolbox', toolboxUrl, this.config.toolbox?.description ?? 'genai-toolbox');
+
+    const entry = this.sources.get('toolbox');
+    if (entry?.status === 'connected') {
+      return { connected: true };
+    }
+    return { connected: false, error: entry?.error ?? 'Failed to connect to genai-toolbox' };
   }
 
   /** Persist current mcp_servers config back to hub_config.yaml. */

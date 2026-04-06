@@ -88,4 +88,86 @@ describe('SourceManager', () => {
     const result = await manager.connectByName('nonexistent');
     expect(result).toBe(false);
   });
+
+  describe('addDatabaseSource', () => {
+    it('generates correct tools.yaml for neo4j template', () => {
+      manager.loadConfig(resolve(process.cwd(), 'config/hub_config.yaml'));
+      const result = manager.generateToolsYaml('neo4j', {
+        uri: 'bolt://localhost:7687',
+        user: 'neo4j',
+        password: 'test123',
+      });
+
+      expect(result.sources['neo4j']).toEqual({
+        kind: 'neo4j',
+        uri: 'bolt://localhost:7687',
+        user: 'neo4j',
+        password: 'test123',
+      });
+      expect(result.tools['neo4j-execute-cypher']).toBeDefined();
+      expect(result.tools['neo4j-execute-cypher'].kind).toBe('neo4j-execute-cypher');
+      expect(result.tools['neo4j-execute-cypher'].source).toBe('neo4j');
+      expect(result.tools['neo4j-schema']).toBeDefined();
+    });
+
+    it('generates correct tools.yaml for spanner template', () => {
+      manager.loadConfig(resolve(process.cwd(), 'config/hub_config.yaml'));
+      const result = manager.generateToolsYaml('spanner', {
+        project: 'my-project',
+        instance: 'my-instance',
+        database: 'my-db',
+        dialect: 'googlesql',
+      });
+
+      expect(result.sources['spanner']).toEqual({
+        kind: 'spanner',
+        project: 'my-project',
+        instance: 'my-instance',
+        database: 'my-db',
+        dialect: 'googlesql',
+      });
+      expect(result.tools['spanner-execute-sql']).toBeDefined();
+      expect(result.tools['spanner-list-tables']).toBeDefined();
+      expect(result.tools['spanner-list-graphs']).toBeDefined();
+    });
+
+    it('generates correct tools.yaml for bigquery template', () => {
+      manager.loadConfig(resolve(process.cwd(), 'config/hub_config.yaml'));
+      const result = manager.generateToolsYaml('bigquery', {
+        project: 'my-project',
+        location: 'us',
+        allowedDatasets: 'dataset1,dataset2',
+      });
+
+      expect(result.sources['bigquery']).toEqual({
+        kind: 'bigquery',
+        project: 'my-project',
+        location: 'us',
+        allowedDatasets: ['dataset1', 'dataset2'],
+      });
+      expect(result.tools['bigquery-execute-sql']).toBeDefined();
+      expect(result.tools['bigquery-conversational-analytics']).toBeDefined();
+      expect(result.tools['bigquery-get-dataset-info']).toBeDefined();
+      expect(result.tools['bigquery-list-dataset-ids']).toBeDefined();
+    });
+
+    it('merges with existing tools.yaml sources', () => {
+      manager.loadConfig(resolve(process.cwd(), 'config/hub_config.yaml'));
+      const result1 = manager.generateToolsYaml('neo4j', {
+        uri: 'bolt://localhost:7687',
+        user: 'neo4j',
+        password: 'test',
+      });
+      const result2 = manager.generateToolsYaml('spanner', {
+        project: 'p',
+        instance: 'i',
+        database: 'd',
+      }, result1);
+
+      expect(result2.sources['neo4j']).toBeDefined();
+      expect(result2.sources['spanner']).toBeDefined();
+      expect(result2.tools['neo4j-execute-cypher']).toBeDefined();
+      expect(result2.tools['spanner-execute-sql']).toBeDefined();
+    });
+  });
 });

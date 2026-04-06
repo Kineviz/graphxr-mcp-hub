@@ -85,6 +85,17 @@ export function createAdminRouter(
     res.json({ name, ...result, sources: sourceManager.getStatus() });
   });
 
+  router.post('/api/sources/database', async (req, res) => {
+    if (!sourceManager) { res.status(500).json({ error: 'SourceManager not available' }); return; }
+    const { type, ...params } = req.body;
+    if (!type || !['neo4j', 'spanner', 'bigquery'].includes(type)) {
+      res.status(400).json({ error: 'type must be one of: neo4j, spanner, bigquery' });
+      return;
+    }
+    const result = await sourceManager.addDatabaseSource(type, params);
+    res.json({ type, ...result, sources: sourceManager.getStatus() });
+  });
+
   router.delete('/api/sources/:name', async (req, res) => {
     if (!sourceManager) { res.status(500).json({ error: 'SourceManager not available' }); return; }
     await sourceManager.removeSource(req.params.name);
