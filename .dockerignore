@@ -1,7 +1,10 @@
 node_modules
+admin_ui/node_modules
+admin_ui/dist
 dist
 .git
 .env
 coverage
 *.md
 .claude
+docs/superpowers

@@ -1,42 +1,27 @@
-# config/tools.yaml — genai-toolbox 数据库配置
-# 只有在 hub_config.yaml 中 toolbox.enabled=true 时才需要配置此文件
+# config/tools.yaml — genai-toolbox (MCP Toolbox for Databases) configuration
+# This file is auto-managed by the Admin UI Database Templates feature.
+# Manual edits are preserved when adding new sources via the UI.
 
 sources:
-  neo4j:
-    kind: neo4j
-    uri: "${NEO4J_URI}"
-    user: "${NEO4J_USER}"
-    password: "${NEO4J_PASSWORD}"
-
   spanner:
     kind: spanner
-    project: "${GCP_PROJECT}"
-    instance: "${SPANNER_INSTANCE}"
-    database: "${SPANNER_DATABASE}"
-
-  postgres:
-    kind: postgres
-    host: "${POSTGRES_HOST:-localhost}"
-    port: "${POSTGRES_PORT:-5432}"
-    database: "${POSTGRES_DB}"
-    user: "${POSTGRES_USER}"
-    password: "${POSTGRES_PASSWORD}"
+    project: spanner-demo-2026
+    instance: demo-2026
+    database: paysim
 
 tools:
-  neo4j-query:
-    kind: neo4j-cypher
-    source: neo4j
-    description: "执行 Cypher 查询 Neo4j 图数据库"
-    statement: "${cypher_query}"
-
-  spanner-query:
-    kind: spanner-sql
+  # Spanner — prebuilt tools
+  spanner-execute-sql:
+    kind: spanner-execute-sql
     source: spanner
-    description: "执行 SQL 查询 Google Spanner"
-    statement: "${sql_query}"
+    description: Execute SQL queries on Google Cloud Spanner (supports GRAPH_TABLE for property graph queries)
 
-  postgres-query:
-    kind: postgres-sql
-    source: postgres
-    description: "执行 SQL 查询 PostgreSQL"
-    statement: "${sql_query}"
+  spanner-list-tables:
+    kind: spanner-list-tables
+    source: spanner
+    description: List tables in Spanner database
+
+  spanner-list-graphs:
+    kind: spanner-list-graphs
+    source: spanner
+    description: List property graphs in Spanner database

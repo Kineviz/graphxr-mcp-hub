@@ -2,12 +2,15 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
+RUN corepack enable && corepack prepare yarn@1.22.22 --activate
+
 COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY tsconfig.json ./
 COPY graphxr_mcp_server/ ./graphxr_mcp_server/
 COPY semantic_layer/ ./semantic_layer/
+COPY admin_ui/ ./admin_ui/
 RUN npm run build
 
 # Stage 2: Runtime
@@ -18,6 +21,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY --from=build /app/dist/ ./dist/
+COPY --from=build /app/admin_ui/dist/ ./admin_ui/dist/
 COPY config/ ./config/
 COPY data/ ./data/
 COPY .env.example ./.env.example
