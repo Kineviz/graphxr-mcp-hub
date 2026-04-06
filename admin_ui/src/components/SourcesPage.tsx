@@ -5,14 +5,72 @@ import {
 } from 'antd';
 import {
   ReloadOutlined, PlusOutlined, LinkOutlined, DisconnectOutlined,
-  DeleteOutlined, DownloadOutlined, SearchOutlined,
+  DeleteOutlined, DownloadOutlined, SearchOutlined, DatabaseOutlined,
 } from '@ant-design/icons';
-import type { SourceInfo, AddSourceParams, RegistryResult } from '../types';
+import type { SourceInfo, AddSourceParams, RegistryResult, DatabaseType, DatabaseTemplateParams } from '../types';
 import { usePolling } from '../hooks/usePolling';
 import * as api from '../api/client';
 
 const { Text } = Typography;
 const { Search } = Input;
+
+interface TemplateConfig {
+  type: DatabaseType;
+  title: string;
+  description: string;
+  color: string;
+  fields: Array<{
+    name: string;
+    label: string;
+    placeholder: string;
+    required?: boolean;
+    type?: 'password' | 'select';
+    options?: Array<{ label: string; value: string }>;
+  }>;
+}
+
+const TEMPLATES: TemplateConfig[] = [
+  {
+    type: 'neo4j',
+    title: 'Neo4j',
+    description: 'Graph database — Cypher queries, schema extraction',
+    color: '#018BFF',
+    fields: [
+      { name: 'uri', label: 'URI', placeholder: 'bolt://localhost:7687', required: true },
+      { name: 'user', label: 'User', placeholder: 'neo4j', required: true },
+      { name: 'password', label: 'Password', placeholder: 'password', type: 'password', required: true },
+    ],
+  },
+  {
+    type: 'spanner',
+    title: 'Google Spanner',
+    description: 'Property graph + SQL — execute SQL, list tables & graphs',
+    color: '#4285F4',
+    fields: [
+      { name: 'project', label: 'GCP Project', placeholder: 'my-gcp-project', required: true },
+      { name: 'instance', label: 'Instance', placeholder: 'my-spanner-instance', required: true },
+      { name: 'database', label: 'Database', placeholder: 'my-database', required: true },
+      {
+        name: 'dialect', label: 'Dialect', placeholder: 'googlesql', type: 'select',
+        options: [
+          { label: 'GoogleSQL (default)', value: 'googlesql' },
+          { label: 'PostgreSQL', value: 'postgresql' },
+        ],
+      },
+    ],
+  },
+  {
+    type: 'bigquery',
+    title: 'BigQuery',
+    description: 'Property graph analytics — SQL, conversational analytics, dataset discovery',
+    color: '#669DF6',
+    fields: [
+      { name: 'project', label: 'GCP Project', placeholder: 'my-gcp-project', required: true },
+      { name: 'location', label: 'Location', placeholder: 'us (optional)' },
+      { name: 'allowedDatasets', label: 'Allowed Datasets', placeholder: 'dataset1, dataset2 (comma separated, optional)' },
+    ],
+  },
+];
 
 export default function SourcesPage() {
   const { token } = theme.useToken();
@@ -23,6 +81,9 @@ export default function SourcesPage() {
   const [regResults, setRegResults] = useState<RegistryResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [installing, setInstalling] = useState<string | null>(null);
+
+  // Database template state
+  const [addingDb, setAddingDb] = useState<string | null>(null);
 
   const fetchSources = useCallback((signal: AbortSignal) => {
     signal.throwIfAborted();
@@ -77,6 +138,22 @@ export default function SourcesPage() {
     try { await api.installFromRegistry(name, pkg, r.description); message.success(`Installed: ${name}`); refresh(); }
     catch { message.error(`Install failed: ${name}`); }
     finally { setInstalling(null); }
+  };
+
+  // ── Database template actions ──────────────────────────────────────
+
+  const handleAddDatabase = async (template: TemplateConfig, values: Record<string, unknown>) => {
+    setAddingDb(template.type);
+    try {
+      const params: DatabaseTemplateParams = { type: template.type, ...values };
+      await api.addDatabaseSource(params);
+      message.success(`${template.title} source added and toolbox enabled`);
+      refresh();
+    } catch (err) {
+      message.error(`Failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setAddingDb(null);
+    }
   };
 
   // ── Table columns ─────────────────────────────────────────────────
@@ -315,6 +392,72 @@ export default function SourcesPage() {
                   />
                 )}
               </Card>
+            ),
+          },
+          {
+            key: 'database',
+            label: <span><DatabaseOutlined /> Database Templates</span>,
+            children: (
+              <div>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+                  Quick-add database sources via genai-toolbox. Requires ADC or service account credentials for GCP databases.
+                </Text>
+                <Row gutter={[16, 16]}>
+                  {TEMPLATES.map((tpl) => (
+                    <Col xs={24} lg={8} key={tpl.type}>
+                      <Card
+                        title={
+                          <span>
+                            <DatabaseOutlined style={{ color: tpl.color, marginRight: 8 }} />
+                            {tpl.title}
+                          </span>
+                        }
+                        size="small"
+                        style={{ borderTop: `2px solid ${tpl.color}` }}
+                      >
+                        <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+                          {tpl.description}
+                        </Text>
+                        <Form
+                          layout="vertical"
+                          size="small"
+                          onFinish={(values) => handleAddDatabase(tpl, values)}
+                        >
+                          {tpl.fields.map((field) => (
+                            <Form.Item
+                              key={field.name}
+                              name={field.name}
+                              label={field.label}
+                              rules={field.required ? [{ required: true, message: `${field.label} is required` }] : []}
+                            >
+                              {field.type === 'password' ? (
+                                <Input.Password placeholder={field.placeholder} />
+                              ) : field.type === 'select' ? (
+                                <Select placeholder={field.placeholder}>
+                                  {field.options?.map((opt) => (
+                                    <Select.Option key={opt.value} value={opt.value}>{opt.label}</Select.Option>
+                                  ))}
+                                </Select>
+                              ) : (
+                                <Input placeholder={field.placeholder} />
+                              )}
+                            </Form.Item>
+                          ))}
+                          <Button
+                            type="primary"
+                            htmlType="submit"
+                            icon={<PlusOutlined />}
+                            loading={addingDb === tpl.type}
+                            block
+                          >
+                            Add {tpl.title}
+                          </Button>
+                        </Form>
+                      </Card>
+                    </Col>
+                  ))}
+                </Row>
+              </div>
             ),
           },
         ]}
