@@ -8,7 +8,8 @@
 import { Router } from 'express';
 import express from 'express';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, join } from 'path';
+import { homedir } from 'os';
 import YAML from 'yaml';
 import { SessionManager } from './session_manager';
 import { LineageTracker } from '../semantic_layer/lineage';
@@ -69,6 +70,35 @@ export function createAdminRouter(
   router.get('/api/lineage', (req, res) => {
     const limit = parseInt(req.query['limit'] as string) || 50;
     res.json({ totalOperations: lineageTracker.count, recent: lineageTracker.getRecent(limit) });
+  });
+
+  // ── ADC Status API ──────────────────────────────────────────────────────
+
+  router.get('/api/adc-status', (_req, res) => {
+    // Check for service account key file
+    const saPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    if (saPath && existsSync(saPath)) {
+      res.json({ available: true, method: 'service-account', detail: saPath });
+      return;
+    }
+
+    // Check for gcloud ADC (application_default_credentials.json)
+    const adcPath = join(
+      process.env.CLOUDSDK_CONFIG || join(homedir(), '.config', 'gcloud'),
+      'application_default_credentials.json',
+    );
+    if (existsSync(adcPath)) {
+      res.json({ available: true, method: 'gcloud-adc', detail: adcPath });
+      return;
+    }
+
+    // Check for GCE metadata server (running on GCP)
+    if (process.env.GCE_METADATA_HOST || process.env.GOOGLE_CLOUD_PROJECT) {
+      res.json({ available: true, method: 'metadata-server', detail: 'GCE metadata service detected' });
+      return;
+    }
+
+    res.json({ available: false });
   });
 
   // ── Sources API (new) ──────────────────────────────────────────────────

@@ -128,7 +128,37 @@ describe('SourceManager', () => {
       });
       expect(result.tools['spanner-execute-sql']).toBeDefined();
       expect(result.tools['spanner-list-tables']).toBeDefined();
+      // Without enablePropertyGraph, no graph tools
+      expect(result.tools['spanner-list-graphs']).toBeUndefined();
+    });
+
+    it('generates spanner property graph tools when enabled', () => {
+      manager.loadConfig(resolve(process.cwd(), 'config/hub_config.yaml'));
+      const result = manager.generateToolsYaml('spanner', {
+        project: 'my-project',
+        instance: 'my-instance',
+        database: 'my-db',
+        enablePropertyGraph: true,
+        graphName: 'FinGraph',
+      });
+
       expect(result.tools['spanner-list-graphs']).toBeDefined();
+      expect(result.tools['spanner-list-graphs'].kind).toBe('spanner-list-graphs');
+      expect(result.tools['spanner-query-graph']).toBeDefined();
+      expect(result.tools['spanner-query-graph'].description).toContain('FinGraph');
+    });
+
+    it('generates bigquery property graph tool when enabled', () => {
+      manager.loadConfig(resolve(process.cwd(), 'config/hub_config.yaml'));
+      const result = manager.generateToolsYaml('bigquery', {
+        project: 'my-project',
+        enablePropertyGraph: true,
+        graphName: 'my_dataset.my_graph',
+      });
+
+      expect(result.tools['bigquery-execute-sql'].description).toContain('GRAPH_TABLE');
+      expect(result.tools['bigquery-query-graph']).toBeDefined();
+      expect(result.tools['bigquery-query-graph'].description).toContain('my_dataset.my_graph');
     });
 
     it('generates correct tools.yaml for bigquery template', () => {

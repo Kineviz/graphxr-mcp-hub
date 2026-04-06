@@ -1,4 +1,4 @@
-import type { SourceInfo, AddSourceParams, SessionInfo, LineageEntry, RegistryResult, DatabaseTemplateParams } from '../types';
+import type { SourceInfo, AddSourceParams, SessionInfo, LineageEntry, RegistryResult, DatabaseTemplateParams, AdcStatus } from '../types';
 
 const BASE = '/admin/api';
 
@@ -62,6 +62,12 @@ export async function disconnectSource(name: string): Promise<SourceInfo[]> {
     method: 'POST',
   });
   return data.sources;
+}
+
+// ── ADC Status ─────────────────────────────────────────────────────────────
+
+export async function getAdcStatus(): Promise<AdcStatus> {
+  return request('/adc-status');
 }
 
 // ── MCP Registry ────────────────────────────────────────────────────────────

@@ -1,32 +1,37 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
-  Table, Tag, Button, Form, Input, Select, Popconfirm, Space, Statistic,
+  Table, Tag, Button, Form, Input, Select, Switch, Popconfirm, Space, Statistic, Alert,
   Row, Col, Card, message, Tabs, Typography, Tooltip, Popover, Spin, List, Empty, theme,
 } from 'antd';
 import {
   ReloadOutlined, PlusOutlined, LinkOutlined, DisconnectOutlined,
   DeleteOutlined, DownloadOutlined, SearchOutlined, DatabaseOutlined,
+  CheckCircleOutlined, CloseCircleOutlined,
 } from '@ant-design/icons';
-import type { SourceInfo, AddSourceParams, RegistryResult, DatabaseType, DatabaseTemplateParams } from '../types';
+import type { SourceInfo, AddSourceParams, RegistryResult, DatabaseType, DatabaseTemplateParams, AdcStatus } from '../types';
 import { usePolling } from '../hooks/usePolling';
 import * as api from '../api/client';
 
 const { Text } = Typography;
 const { Search } = Input;
 
+interface TemplateField {
+  name: string;
+  label: string;
+  placeholder: string;
+  required?: boolean;
+  type?: 'password' | 'select' | 'switch';
+  options?: Array<{ label: string; value: string }>;
+  showWhen?: string; // field name that must be truthy to show this field
+}
+
 interface TemplateConfig {
   type: DatabaseType;
   title: string;
   description: string;
   color: string;
-  fields: Array<{
-    name: string;
-    label: string;
-    placeholder: string;
-    required?: boolean;
-    type?: 'password' | 'select';
-    options?: Array<{ label: string; value: string }>;
-  }>;
+  needsAdc?: boolean;
+  fields: TemplateField[];
 }
 
 const TEMPLATES: TemplateConfig[] = [
@@ -44,8 +49,9 @@ const TEMPLATES: TemplateConfig[] = [
   {
     type: 'spanner',
     title: 'Google Spanner',
-    description: 'Property graph + SQL — execute SQL, list tables & graphs',
+    description: 'Relational + Property Graph — SQL, GQL via GRAPH_TABLE()',
     color: '#4285F4',
+    needsAdc: true,
     fields: [
       { name: 'project', label: 'GCP Project', placeholder: 'my-gcp-project', required: true },
       { name: 'instance', label: 'Instance', placeholder: 'my-spanner-instance', required: true },
@@ -57,17 +63,22 @@ const TEMPLATES: TemplateConfig[] = [
           { label: 'PostgreSQL', value: 'postgresql' },
         ],
       },
+      { name: 'enablePropertyGraph', label: 'Enable Property Graph', placeholder: '', type: 'switch' },
+      { name: 'graphName', label: 'Graph Name', placeholder: 'FinGraph', showWhen: 'enablePropertyGraph' },
     ],
   },
   {
     type: 'bigquery',
     title: 'BigQuery',
-    description: 'Property graph analytics — SQL, conversational analytics, dataset discovery',
+    description: 'Analytics + Property Graph — SQL, GQL via GRAPH_TABLE()',
     color: '#669DF6',
+    needsAdc: true,
     fields: [
       { name: 'project', label: 'GCP Project', placeholder: 'my-gcp-project', required: true },
       { name: 'location', label: 'Location', placeholder: 'us (optional)' },
       { name: 'allowedDatasets', label: 'Allowed Datasets', placeholder: 'dataset1, dataset2 (comma separated, optional)' },
+      { name: 'enablePropertyGraph', label: 'Enable Property Graph', placeholder: '', type: 'switch' },
+      { name: 'graphName', label: 'Graph Name', placeholder: 'my_dataset.my_graph', showWhen: 'enablePropertyGraph' },
     ],
   },
 ];
@@ -84,6 +95,12 @@ export default function SourcesPage() {
 
   // Database template state
   const [addingDb, setAddingDb] = useState<string | null>(null);
+  const [adcStatus, setAdcStatus] = useState<AdcStatus | null>(null);
+  const [graphToggles, setGraphToggles] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    api.getAdcStatus().then(setAdcStatus).catch(() => setAdcStatus({ available: false }));
+  }, []);
 
   const fetchSources = useCallback((signal: AbortSignal) => {
     signal.throwIfAborted();
@@ -399,9 +416,25 @@ export default function SourcesPage() {
             label: <span><DatabaseOutlined /> Database Templates</span>,
             children: (
               <div>
-                <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-                  Quick-add database sources via genai-toolbox. Requires ADC or service account credentials for GCP databases.
-                </Text>
+                {/* ADC Status Banner */}
+                {adcStatus && (
+                  <Alert
+                    type={adcStatus.available ? 'success' : 'warning'}
+                    showIcon
+                    icon={adcStatus.available ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
+                    message={
+                      adcStatus.available
+                        ? `GCP credentials detected (${adcStatus.method}${adcStatus.method === 'gcloud-adc' ? ' — gcloud auth application-default login' : ''})`
+                        : 'GCP credentials not found — Spanner/BigQuery require ADC or service account'
+                    }
+                    description={
+                      !adcStatus.available
+                        ? 'Run "gcloud auth application-default login" or set GOOGLE_APPLICATION_CREDENTIALS in .env'
+                        : undefined
+                    }
+                    style={{ marginBottom: 16 }}
+                  />
+                )}
                 <Row gutter={[16, 16]}>
                   {TEMPLATES.map((tpl) => (
                     <Col xs={24} lg={8} key={tpl.type}>
@@ -410,6 +443,9 @@ export default function SourcesPage() {
                           <span>
                             <DatabaseOutlined style={{ color: tpl.color, marginRight: 8 }} />
                             {tpl.title}
+                            {tpl.needsAdc && adcStatus?.available && (
+                              <Tag color="green" style={{ marginLeft: 8, fontSize: 11 }}>ADC Ready</Tag>
+                            )}
                           </span>
                         }
                         size="small"
@@ -423,31 +459,45 @@ export default function SourcesPage() {
                           size="small"
                           onFinish={(values) => handleAddDatabase(tpl, values)}
                         >
-                          {tpl.fields.map((field) => (
-                            <Form.Item
-                              key={field.name}
-                              name={field.name}
-                              label={field.label}
-                              rules={field.required ? [{ required: true, message: `${field.label} is required` }] : []}
-                            >
-                              {field.type === 'password' ? (
-                                <Input.Password placeholder={field.placeholder} />
-                              ) : field.type === 'select' ? (
-                                <Select placeholder={field.placeholder}>
-                                  {field.options?.map((opt) => (
-                                    <Select.Option key={opt.value} value={opt.value}>{opt.label}</Select.Option>
-                                  ))}
-                                </Select>
-                              ) : (
-                                <Input placeholder={field.placeholder} />
-                              )}
-                            </Form.Item>
-                          ))}
+                          {tpl.fields.map((field) => {
+                            // Hide conditional fields when their dependency is off
+                            if (field.showWhen && !graphToggles[`${tpl.type}_${field.showWhen}`]) {
+                              return null;
+                            }
+                            return (
+                              <Form.Item
+                                key={field.name}
+                                name={field.name}
+                                label={field.type !== 'switch' ? field.label : undefined}
+                                valuePropName={field.type === 'switch' ? 'checked' : 'value'}
+                                rules={field.required ? [{ required: true, message: `${field.label} is required` }] : []}
+                              >
+                                {field.type === 'password' ? (
+                                  <Input.Password placeholder={field.placeholder} />
+                                ) : field.type === 'select' ? (
+                                  <Select placeholder={field.placeholder}>
+                                    {field.options?.map((opt) => (
+                                      <Select.Option key={opt.value} value={opt.value}>{opt.label}</Select.Option>
+                                    ))}
+                                  </Select>
+                                ) : field.type === 'switch' ? (
+                                  <Switch
+                                    checkedChildren={field.label}
+                                    unCheckedChildren={field.label}
+                                    onChange={(checked) => setGraphToggles((prev) => ({ ...prev, [`${tpl.type}_${field.name}`]: checked }))}
+                                  />
+                                ) : (
+                                  <Input placeholder={field.placeholder} />
+                                )}
+                              </Form.Item>
+                            );
+                          })}
                           <Button
                             type="primary"
                             htmlType="submit"
                             icon={<PlusOutlined />}
                             loading={addingDb === tpl.type}
+                            disabled={tpl.needsAdc && !adcStatus?.available}
                             block
                           >
                             Add {tpl.title}

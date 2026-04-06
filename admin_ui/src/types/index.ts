@@ -56,4 +56,13 @@ export interface DatabaseTemplateParams {
   // BigQuery
   location?: string;
   allowedDatasets?: string;
+  // Property Graph (Spanner & BigQuery)
+  enablePropertyGraph?: boolean;
+  graphName?: string;
+}
+
+export interface AdcStatus {
+  available: boolean;
+  method?: 'service-account' | 'gcloud-adc' | 'metadata-server';
+  detail?: string;
 }

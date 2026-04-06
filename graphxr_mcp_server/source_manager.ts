@@ -407,18 +407,28 @@ export class SourceManager {
         tools['spanner-execute-sql'] = {
           kind: 'spanner-execute-sql',
           source: 'spanner',
-          description: 'Execute SQL queries on Google Cloud Spanner',
+          description: 'Execute SQL queries on Google Cloud Spanner (supports GRAPH_TABLE for property graph queries)',
         };
         tools['spanner-list-tables'] = {
           kind: 'spanner-list-tables',
           source: 'spanner',
           description: 'List tables in Spanner database',
         };
-        tools['spanner-list-graphs'] = {
-          kind: 'spanner-list-graphs',
-          source: 'spanner',
-          description: 'List property graphs in Spanner database',
-        };
+        if (params.enablePropertyGraph) {
+          tools['spanner-list-graphs'] = {
+            kind: 'spanner-list-graphs',
+            source: 'spanner',
+            description: 'List property graphs in Spanner database',
+          };
+          if (params.graphName) {
+            tools['spanner-query-graph'] = {
+              kind: 'spanner-sql',
+              source: 'spanner',
+              description: `Query property graph "${params.graphName}" using GRAPH_TABLE() syntax in Spanner`,
+              statement: `SELECT * FROM GRAPH_TABLE(${params.graphName} MATCH -[e]-> RETURN e LIMIT 100)`,
+            };
+          }
+        }
         break;
 
       case 'bigquery': {
@@ -434,7 +444,9 @@ export class SourceManager {
         tools['bigquery-execute-sql'] = {
           kind: 'bigquery-execute-sql',
           source: 'bigquery',
-          description: 'Execute SQL queries on BigQuery',
+          description: params.enablePropertyGraph
+            ? 'Execute SQL queries on BigQuery (supports GRAPH_TABLE for property graph queries)'
+            : 'Execute SQL queries on BigQuery',
         };
         tools['bigquery-conversational-analytics'] = {
           kind: 'bigquery-conversational-analytics',
@@ -451,6 +463,14 @@ export class SourceManager {
           source: 'bigquery',
           description: 'List BigQuery dataset IDs',
         };
+        if (params.enablePropertyGraph && params.graphName) {
+          tools['bigquery-query-graph'] = {
+            kind: 'bigquery-sql',
+            source: 'bigquery',
+            description: `Query property graph "${params.graphName}" using GRAPH_TABLE() syntax in BigQuery`,
+            statement: `SELECT * FROM GRAPH_TABLE(${params.graphName} MATCH -[e]-> RETURN e LIMIT 100)`,
+          };
+        }
         break;
       }
     }
