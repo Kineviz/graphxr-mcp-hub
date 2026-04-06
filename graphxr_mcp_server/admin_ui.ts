@@ -92,6 +92,16 @@ export function createAdminRouter(
       res.status(400).json({ error: 'type must be one of: neo4j, spanner, bigquery' });
       return;
     }
+    const requiredFields: Record<string, string[]> = {
+      neo4j: ['uri', 'user', 'password'],
+      spanner: ['project', 'instance', 'database'],
+      bigquery: ['project'],
+    };
+    const missing = requiredFields[type]?.filter((f) => !params[f]);
+    if (missing?.length) {
+      res.status(400).json({ error: `Missing required fields for ${type}: ${missing.join(', ')}` });
+      return;
+    }
     const result = await sourceManager.addDatabaseSource(type, params);
     res.json({ type, ...result, sources: sourceManager.getStatus() });
   });
