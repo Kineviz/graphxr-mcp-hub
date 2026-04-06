@@ -15,9 +15,10 @@ import { SessionManager } from './session_manager';
 import { LineageTracker } from '../semantic_layer/lineage';
 import { SourceManager } from './source_manager';
 import { GraphXRBridge } from './graphxr_bridge';
+import { resolveConfigPath, resolveAdminDist } from './paths';
 
-const CONFIG_PATH = resolve(process.cwd(), 'config/hub_config.yaml');
-const ADMIN_DIST = resolve(process.cwd(), 'admin_ui/dist');
+const CONFIG_PATH = resolveConfigPath('hub_config.yaml');
+const ADMIN_DIST = resolveAdminDist() ?? resolve(process.cwd(), 'admin_ui/dist');
 
 // ---------------------------------------------------------------------------
 // Admin Router Factory

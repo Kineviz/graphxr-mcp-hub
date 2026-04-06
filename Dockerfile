@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM node:20-alpine AS build
+FROM node:22 AS build
 WORKDIR /app
 
 RUN corepack enable && corepack prepare yarn@1.22.22 --activate
@@ -14,7 +14,7 @@ COPY admin_ui/ ./admin_ui/
 RUN npm run build
 
 # Stage 2: Runtime
-FROM node:20-alpine
+FROM node:22
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -31,6 +31,9 @@ ENV GRAPHXR_WS_URL=ws://host.docker.internal:8080
 ENV MCP_TRANSPORT=http
 
 EXPOSE 8899
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8899/health || exit 1
 
 CMD ["node", "dist/graphxr_mcp_server/index.js"]
 

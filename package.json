@@ -1,11 +1,22 @@
 {
-  "name": "graphxr-mcp-hub",
+  "name": "@kineviz/graphxr_mcp_server",
   "version": "0.1.0",
   "description": "GraphXR MCP Hub — Multi-source data × MCP protocol × unified graph semantic layer × GraphXR integration",
   "main": "dist/graphxr_mcp_server/index.js",
+  "bin": {
+    "graphxr-mcp-server": "dist/graphxr_mcp_server/index.js"
+  },
+  "files": [
+    "dist/graphxr_mcp_server/",
+    "dist/semantic_layer/",
+    "config/*.yaml",
+    "admin_ui/dist/",
+    "examples/"
+  ],
   "scripts": {
-    "build": "tsc && yarn build:admin",
-    "build:server": "tsc",
+    "build": "tsc && node -e \"const fs=require('fs'),f='dist/graphxr_mcp_server/index.js',c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c);\" && yarn build:admin",
+    "build:server": "tsc && node -e \"const fs=require('fs'),f='dist/graphxr_mcp_server/index.js',c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c);\"",
+    "prepublishOnly": "npm run build",
     "build:admin": "cd admin_ui && yarn install && yarn build",
     "dev:admin": "cd admin_ui && yarn dev",
     "start": "node dist/graphxr_mcp_server/index.js",

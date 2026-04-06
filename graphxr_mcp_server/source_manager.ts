@@ -16,6 +16,7 @@ import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import YAML from 'yaml';
+import { resolveConfigPath } from './paths';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -92,7 +93,7 @@ export interface AddSourceParams {
 export class SourceManager {
   private sources = new Map<string, SourceEntry>();
   private config: HubConfig = {};
-  private configPath = resolve(process.cwd(), 'config/hub_config.yaml');
+  private configPath = resolveConfigPath('hub_config.yaml');
 
   /** Load config from hub_config.yaml. */
   loadConfig(configPath?: string): void {
@@ -273,7 +274,7 @@ export class SourceManager {
   // ---------------------------------------------------------------------------
 
   private get toolsYamlPath(): string {
-    return resolve(process.cwd(), 'config/tools.yaml');
+    return resolveConfigPath('tools.yaml');
   }
 
   /** Parse tools.yaml and return individual database entries. */

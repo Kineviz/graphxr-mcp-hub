@@ -24,6 +24,7 @@ import {
 import * as dotenv from 'dotenv';
 import { resolve } from 'path';
 
+import { getPackageRoot } from './paths';
 import { GraphXRBridge } from './graphxr_bridge';
 import { randomUUID } from 'crypto';
 
@@ -130,6 +131,14 @@ async function startStdioMode(): Promise<void> {
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
+}
+
+// ---------------------------------------------------------------------------
+// Dual mode — STDIO + HTTP/SSE simultaneously
+// ---------------------------------------------------------------------------
+async function startDualMode(): Promise<void> {
+  console.error(`[graphxr-mcp] Starting in DUAL mode (STDIO + HTTP:${PORT})`);
+  await Promise.all([startStdioMode(), startHttpMode()]);
 }
 
 // ---------------------------------------------------------------------------
@@ -319,7 +328,7 @@ async function startHttpMode(): Promise<void> {
   });
 
   // ── Examples (auto-generated index + static files) ─────────────────────
-  const examplesDir = resolve(__dirname, '..', 'examples');
+  const examplesDir = resolve(getPackageRoot(), 'examples');
   app.get('/examples', (_req, res) => {
     const { readdirSync } = require('fs') as typeof import('fs');
     try {
@@ -368,16 +377,15 @@ li{margin:8px 0;font-size:1.1rem}</style></head>
 // ---------------------------------------------------------------------------
 const mode = process.argv.includes('--stdio') || process.env.MCP_TRANSPORT === 'stdio'
   ? 'stdio'
-  : 'http';
+  : process.argv.includes('--http') || process.env.MCP_TRANSPORT === 'http'
+    ? 'http'
+    : 'dual';
 
-if (mode === 'stdio') {
-  startStdioMode().catch((err) => {
-    console.error('[graphxr-mcp] Fatal error (stdio mode):', err);
-    process.exit(1);
-  });
-} else {
-  startHttpMode().catch((err) => {
-    console.error('[graphxr-mcp] Fatal error (http mode):', err);
-    process.exit(1);
-  });
-}
+const startFn = mode === 'stdio' ? startStdioMode
+  : mode === 'http' ? startHttpMode
+  : startDualMode;
+
+startFn().catch((err) => {
+  console.error(`[graphxr-mcp] Fatal error (${mode} mode):`, err);
+  process.exit(1);
+});
