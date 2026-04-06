@@ -419,18 +419,26 @@ export default function SourcesPage() {
                 {/* ADC Status Banner */}
                 {adcStatus && (
                   <Alert
-                    type={adcStatus.available ? 'success' : 'warning'}
+                    type={
+                      !adcStatus.available ? 'warning'
+                      : adcStatus.tokenValid === false ? 'error'
+                      : 'success'
+                    }
                     showIcon
-                    icon={adcStatus.available ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
+                    icon={adcStatus.available && adcStatus.tokenValid !== false ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
                     message={
-                      adcStatus.available
-                        ? `GCP credentials detected (${adcStatus.method}${adcStatus.method === 'gcloud-adc' ? ' — gcloud auth application-default login' : ''})`
-                        : 'GCP credentials not found — Spanner/BigQuery require ADC or service account'
+                      !adcStatus.available
+                        ? 'GCP credentials not found — Spanner/BigQuery require ADC or service account'
+                      : adcStatus.tokenValid === false
+                        ? `GCP credentials found but token refresh failed: ${adcStatus.tokenError}`
+                      : `GCP credentials verified (${adcStatus.method}${adcStatus.expiresIn ? `, token expires in ${Math.round(adcStatus.expiresIn / 60)}m` : ''})`
                     }
                     description={
                       !adcStatus.available
                         ? 'Run "gcloud auth application-default login" or set GOOGLE_APPLICATION_CREDENTIALS in .env'
-                        : undefined
+                      : adcStatus.tokenValid === false
+                        ? 'Run "gcloud auth application-default login" to refresh your credentials'
+                      : undefined
                     }
                     style={{ marginBottom: 16 }}
                   />
@@ -443,7 +451,7 @@ export default function SourcesPage() {
                           <span>
                             <DatabaseOutlined style={{ color: tpl.color, marginRight: 8 }} />
                             {tpl.title}
-                            {tpl.needsAdc && adcStatus?.available && (
+                            {tpl.needsAdc && adcStatus?.available && adcStatus?.tokenValid !== false && (
                               <Tag color="green" style={{ marginLeft: 8, fontSize: 11 }}>ADC Ready</Tag>
                             )}
                           </span>
@@ -497,7 +505,7 @@ export default function SourcesPage() {
                             htmlType="submit"
                             icon={<PlusOutlined />}
                             loading={addingDb === tpl.type}
-                            disabled={tpl.needsAdc && !adcStatus?.available}
+                            disabled={tpl.needsAdc && (!adcStatus?.available || adcStatus?.tokenValid === false)}
                             block
                           >
                             Add {tpl.title}

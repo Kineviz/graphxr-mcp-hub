@@ -65,4 +65,7 @@ export interface AdcStatus {
   available: boolean;
   method?: 'service-account' | 'gcloud-adc' | 'metadata-server';
   detail?: string;
+  tokenValid?: boolean;
+  expiresIn?: number;
+  tokenError?: string;
 }

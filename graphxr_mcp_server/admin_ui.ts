@@ -74,7 +74,7 @@ export function createAdminRouter(
 
   // ── ADC Status API ──────────────────────────────────────────────────────
 
-  router.get('/api/adc-status', (_req, res) => {
+  router.get('/api/adc-status', async (_req, res) => {
     // Check for service account key file
     const saPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
     if (saPath && existsSync(saPath)) {
@@ -92,8 +92,53 @@ export function createAdminRouter(
 
     for (const dir of adcCandidates) {
       const adcPath = join(dir, 'application_default_credentials.json');
-      if (existsSync(adcPath)) {
+      if (!existsSync(adcPath)) continue;
+
+      // Validate by attempting a token refresh
+      try {
+        const creds = JSON.parse(readFileSync(adcPath, 'utf-8'));
+        if (creds.type === 'authorized_user' && creds.client_id && creds.refresh_token) {
+          const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              client_id: creds.client_id,
+              client_secret: creds.client_secret,
+              refresh_token: creds.refresh_token,
+              grant_type: 'refresh_token',
+            }),
+          });
+          if (tokenRes.ok) {
+            const tokenData = await tokenRes.json() as Record<string, unknown>;
+            res.json({
+              available: true,
+              method: 'gcloud-adc',
+              detail: adcPath,
+              tokenValid: true,
+              expiresIn: tokenData.expires_in,
+            });
+          } else {
+            const err = await tokenRes.json() as Record<string, unknown>;
+            res.json({
+              available: true,
+              method: 'gcloud-adc',
+              detail: adcPath,
+              tokenValid: false,
+              tokenError: err.error_description ?? err.error ?? 'Token refresh failed',
+            });
+          }
+          return;
+        }
+        // Service account JSON (not authorized_user)
+        if (creds.type === 'service_account') {
+          res.json({ available: true, method: 'service-account', detail: adcPath });
+          return;
+        }
+        // Unknown type but file exists
         res.json({ available: true, method: 'gcloud-adc', detail: adcPath });
+        return;
+      } catch {
+        res.json({ available: true, method: 'gcloud-adc', detail: adcPath, tokenValid: false, tokenError: 'Failed to read or parse credentials' });
         return;
       }
     }
