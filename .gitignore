@@ -3,3 +3,6 @@ dist/
 .env
 *.js.map
 coverage/
+
+# User-specific database config (see config/tools.yaml.example)
+config/tools.yaml
