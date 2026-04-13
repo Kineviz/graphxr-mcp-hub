@@ -16,15 +16,15 @@
     "examples/"
   ],
   "scripts": {
-    "ensure-config": "tsx scripts/ensure-tools-yaml.ts",
+    "ensure-config": "tsx scripts/ensure-config.ts",
     "build": "tsc && node -e \"const fs=require('fs'),f='dist/graphxr_mcp_server/index.js',c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c);\" && yarn build:admin",
     "build:server": "tsc && node -e \"const fs=require('fs'),f='dist/graphxr_mcp_server/index.js',c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c);\"",
     "prepublishOnly": "npm run build",
     "build:admin": "cd admin_ui && yarn install && yarn build",
     "dev:admin": "cd admin_ui && yarn dev",
-    "prestart": "tsx scripts/ensure-tools-yaml.ts",
+    "prestart": "tsx scripts/ensure-config.ts",
     "start": "node dist/graphxr_mcp_server/index.js",
-    "predev": "tsx scripts/ensure-tools-yaml.ts",
+    "predev": "tsx scripts/ensure-config.ts",
     "dev": "npx kill-port 8899 && tsx watch graphxr_mcp_server/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",

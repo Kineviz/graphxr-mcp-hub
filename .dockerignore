@@ -8,3 +8,7 @@ coverage
 *.md
 .claude
 docs/superpowers
+# User-local tools.yaml must not leak into the image — it would bake
+# developer credentials into a public image. The ensure-config step
+# re-creates it at runtime from tools.yaml.example.
+config/tools.yaml

@@ -16,8 +16,8 @@ import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import YAML from 'yaml';
-import { resolveConfigPath } from './paths';
-import { ensureToolsYaml } from './ensure_tools_yaml';
+import { resolveConfigPath, getPackageRoot } from './paths';
+import { ensureConfigFiles } from './ensure_config';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -108,7 +108,16 @@ export class SourceManager {
       });
       this.config = YAML.parse(resolved) ?? {};
     } catch {
-      // Config not found — proceed with defaults
+      // hub_config.yaml missing or unreadable — fall back to safe defaults.
+      // toolbox defaults to enabled so deployments without a hub_config.yaml
+      // still auto-connect to genai-toolbox at the standard URL.
+      this.config = {
+        toolbox: {
+          enabled: true,
+          url: process.env.GENAI_TOOLBOX_URL ?? 'http://localhost:5000/mcp/sse',
+          description: 'genai-toolbox (defaults)',
+        },
+      };
     }
   }
 
@@ -118,7 +127,14 @@ export class SourceManager {
    * STDIO servers are connected on-demand via connectSource().
    */
   async initialize(): Promise<void> {
-    ensureToolsYaml();
+    // Bootstrap any missing config files from shipped templates.
+    // Look for templates next to cwd first, then fall back to package root
+    // (which includes /app/config-defaults in the Docker image).
+    ensureConfigFiles({ baseDir: process.cwd() });
+    const pkgRoot = getPackageRoot();
+    if (pkgRoot !== process.cwd()) {
+      ensureConfigFiles({ baseDir: process.cwd(), defaultsDir: resolve(pkgRoot, 'config-defaults') });
+    }
     this.loadConfig();
 
     // Auto-connect genai-toolbox if enabled

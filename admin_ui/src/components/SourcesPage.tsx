@@ -42,7 +42,7 @@ const TEMPLATES: TemplateConfig[] = [
     description: 'Graph database — Cypher queries, schema extraction',
     color: '#018BFF',
     fields: [
-      { name: 'uri', label: 'URI', placeholder: 'bolt://localhost:7687', required: true },
+      { name: 'uri', label: 'URI', placeholder: 'bolt://host.docker.internal:7687', required: true },
       { name: 'user', label: 'User', placeholder: 'neo4j', required: true },
       { name: 'password', label: 'Password', placeholder: 'password', type: 'password', required: true },
     ],

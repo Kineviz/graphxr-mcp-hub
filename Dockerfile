@@ -22,7 +22,13 @@ RUN npm ci --omit=dev
 
 COPY --from=build /app/dist/ ./dist/
 COPY --from=build /app/admin_ui/dist/ ./admin_ui/dist/
+# Baked-in config templates. docker-compose mounts ./config over /app/config,
+# which would shadow anything we copied to /app/config/. Keep a second,
+# unmounted copy so config-init (and source_manager at runtime) can re-hydrate
+# the mounted volume on first run.
+COPY config/ ./config-defaults/
 COPY config/ ./config/
+COPY examples/ ./examples/
 COPY data/ ./data/
 COPY .env.example ./.env.example
 

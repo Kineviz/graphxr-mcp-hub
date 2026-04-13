@@ -12,24 +12,36 @@
 #   docker compose -f docker-compose.yml up -d
 
 services:
-  # 一次性初始化容器：在任何服务启动前确保 ./config/tools.yaml 以「文件」形式存在。
-  # 背景：genai-toolbox 需要读取 tools.yaml。若使用单文件 bind mount
-  # (./config/tools.yaml:/app/tools.yaml) 且宿主机上该路径不存在，Docker 会
-  # 默认把它当成目录自动创建，导致 toolbox 读到的是目录而非文件，持续崩溃循环。
-  # 这里改用目录挂载 + 初始化容器兜底，无需用户手动预创建任何文件。
+  # 一次性初始化容器：在任何服务启动前，把镜像里 /app/config-defaults/ 的所有
+  # 模板文件（hub_config.yaml / tools.yaml.example / ollama_config.ts 等）
+  # 兜底复制到宿主机挂载的 ./config/。只对缺失的文件生效，不会覆盖用户已编辑的内容。
+  #
+  # 同时保证 tools.yaml 存在为「文件」形式：若宿主机缺失该路径，Docker 会默认
+  # 把单文件 bind mount 当成目录创建，导致 genai-toolbox 读到的是目录而非文件，
+  # 陷入崩溃循环。改用目录挂载 + 本初始化容器即可规避。
   config-init:
-    image: busybox:latest
+    image: kineviz/graphxr-mcp-server:latest
     volumes:
-      - ./config:/config
+      - ./config:/app/config
+    entrypoint: ["/bin/sh", "-c"]
     command:
-      - sh
-      - -c
       - |
-        if [ ! -f /config/tools.yaml ]; then
-          printf 'sources: {}\ntools: {}\n' > /config/tools.yaml
-          echo "[config-init] Created empty /config/tools.yaml"
-        else
-          echo "[config-init] /config/tools.yaml already exists"
+        set -e
+        mkdir -p /app/config
+        for src in /app/config-defaults/*; do
+          [ -e "$$src" ] || continue
+          name=$$(basename "$$src")
+          dst="/app/config/$$name"
+          if [ ! -e "$$dst" ]; then
+            cp "$$src" "$$dst"
+            echo "[config-init] Seeded $$dst from $$src"
+          else
+            echo "[config-init] $$dst already exists — leaving untouched"
+          fi
+        done
+        if [ ! -f /app/config/tools.yaml ]; then
+          printf 'sources: {}\ntools: {}\n' > /app/config/tools.yaml
+          echo "[config-init] Created empty /app/config/tools.yaml"
         fi
     restart: "no"
 
