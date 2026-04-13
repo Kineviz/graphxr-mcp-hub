@@ -105,7 +105,7 @@ export default function App() {
           <Content style={{ padding: 24, overflow: 'auto' }}>
             <Routes>
               <Route path="/" element={<DashboardPage />} />
-              <Route path="/sources" element={<SourcesPage />} />
+              <Route path="/sources/*" element={<SourcesPage />} />
               <Route path="/sessions" element={<SessionsPage />} />
               <Route path="/lineage" element={<LineagePage />} />
               <Route path="/settings" element={<SettingsPage />} />

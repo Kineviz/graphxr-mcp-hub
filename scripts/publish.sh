@@ -18,13 +18,14 @@ DO_PUSH=false
 DO_TEST=false
 DO_NPM=false
 IMAGE_TAG=""
+TAG_EXPLICIT=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --push)  DO_PUSH=true; shift ;;
     --test)  DO_TEST=true; shift ;;
     --npm)   DO_NPM=true; shift ;;
-    --tag)   IMAGE_TAG="$2"; shift 2 ;;
+    --tag)   IMAGE_TAG="$2"; TAG_EXPLICIT=true; shift 2 ;;
     -h|--help) IMAGE_TAG="__help__"; shift ;;
     *)
       echo "未知参数: $1"
@@ -73,8 +74,8 @@ build() {
   echo "=== 构建 Docker 镜像: ${IMAGE_NAME}:${IMAGE_TAG} ==="
   docker build -t "${IMAGE_NAME}:${IMAGE_TAG}" .
 
-  # 同时打上 latest 标签
-  if [[ "$IMAGE_TAG" != "latest" ]]; then
+  # 未显式指定 --tag 时，同时打上 latest 标签
+  if ! $TAG_EXPLICIT && [[ "$IMAGE_TAG" != "latest" ]]; then
     docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "${IMAGE_NAME}:latest"
     echo "  已标记 ${IMAGE_NAME}:latest"
   fi
@@ -153,10 +154,11 @@ test_image() {
 push_image() {
   echo "=== 推送镜像到 Docker Hub ==="
   docker push "${IMAGE_NAME}:${IMAGE_TAG}"
-  if [[ "$IMAGE_TAG" != "latest" ]]; then
-    docker push "${IMAGE_NAME}:latest"
-  fi
   echo "  已推送 ${IMAGE_NAME}:${IMAGE_TAG}"
+  if ! $TAG_EXPLICIT && [[ "$IMAGE_TAG" != "latest" ]]; then
+    docker push "${IMAGE_NAME}:latest"
+    echo "  已推送 ${IMAGE_NAME}:latest"
+  fi
   echo ""
 }
 

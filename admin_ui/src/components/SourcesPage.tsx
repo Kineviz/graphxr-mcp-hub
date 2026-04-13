@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useLocation, useNavigate, Navigate } from 'react-router-dom';
 import {
   Table, Tag, Button, Form, Input, Select, Switch, Popconfirm, Space, Statistic, Alert,
   Row, Col, Card, message, Tabs, Typography, Tooltip, Popover, Spin, List, Empty, theme, Modal,
@@ -83,10 +84,20 @@ const TEMPLATES: TemplateConfig[] = [
   },
 ];
 
+const VALID_TABS = ['add', 'registry', 'database'] as const;
+type SourcesTab = typeof VALID_TABS[number];
+
 export default function SourcesPage() {
   const { token } = theme.useToken();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [form] = Form.useForm<AddSourceParams>();
   const [transport, setTransport] = useState<'stdio' | 'sse'>('stdio');
+
+  const tabSegment = location.pathname.replace(/^\/sources\/?/, '').split('/')[0];
+  const activeTab = (VALID_TABS as readonly string[]).includes(tabSegment)
+    ? (tabSegment as SourcesTab)
+    : null;
 
   // Registry state
   const [regResults, setRegResults] = useState<RegistryResult[]>([]);
@@ -461,9 +472,14 @@ export default function SourcesPage() {
         })()}
       </Modal>
 
+      {/* Redirect /sources and invalid sub-paths to /sources/add */}
+      {activeTab === null && <Navigate to="/sources/add" replace />}
+
       {/* Add Source + Registry */}
       <Tabs
         type="card"
+        activeKey={activeTab ?? 'add'}
+        onChange={(key) => navigate(`/sources/${key}`)}
         items={[
           {
             key: 'add',

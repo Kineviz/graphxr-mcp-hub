@@ -8,7 +8,8 @@
       "Bash(npx*)",
       "Bash(netstat -ano)",
       "Bash(taskkill *)",
-      "Bash(yarn add:*)"
+      "Bash(yarn add:*)",
+      "Bash(yarn build:*)"
     ]
   }
 }
