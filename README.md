@@ -64,6 +64,8 @@ cp .env.example .env
 # 按需修改 .env 中的参数
 ```
 
+数据库配置 `config/tools.yaml` 属于本地文件（已 gitignore）。首次运行 `yarn dev` / `yarn start` 会自动从 `config/tools.yaml.example` 复制一份。Docker 用户请在 `docker-compose up` 之前先跑 `yarn ensure-config` 确保文件存在。数据库连接建议通过 Admin UI（http://localhost:8899/admin）的 "Database Templates" 页添加。
+
 ### 3. 启动 GraphXR MCP Server
 
 ```bash
@@ -401,7 +403,8 @@ graphxr-mcp-hub/
 │       └── kafka_transformer.ts  # Kafka 消息 → 图数据转换器
 ├── config/
 │   ├── hub_config.yaml       # 总控配置（端口、数据源开关、Kafka、Ollama）
-│   ├── tools.yaml            # genai-toolbox 数据库配置
+│   ├── tools.yaml.example    # genai-toolbox 数据库配置模板（入库）
+│   ├── tools.yaml            # 本地真实配置（gitignore，首次运行自动从 .example 生成）
 │   └── ollama_config.ts      # Ollama 本地 LLM 配置生成器
 ├── data/
 │   ├── sample.csv
