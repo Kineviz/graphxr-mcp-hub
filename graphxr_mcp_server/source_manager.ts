@@ -17,6 +17,7 @@ import { readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import YAML from 'yaml';
 import { resolveConfigPath } from './paths';
+import { ensureToolsYaml } from './ensure_tools_yaml';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -117,6 +118,7 @@ export class SourceManager {
    * STDIO servers are connected on-demand via connectSource().
    */
   async initialize(): Promise<void> {
+    ensureToolsYaml();
     this.loadConfig();
 
     // Auto-connect genai-toolbox if enabled
