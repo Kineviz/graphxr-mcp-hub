@@ -1,0 +1,62 @@
+# GraphXR MCP Hub — tools.yaml template
+#
+# This file is a TEMPLATE. The real config lives in config/tools.yaml,
+# which is gitignored and contains your personal database credentials.
+#
+# First run of `yarn dev` / `yarn start` / `yarn ensure-config` copies
+# this file to config/tools.yaml automatically.
+#
+# Uncomment and edit the sections you need, OR use the Admin UI's
+# "Database Templates" page (http://localhost:8899/admin) to add
+# sources interactively.
+
+sources: {}
+  # ── Spanner (with property graph) ────────────────────────────────
+  # spanner:
+  #   kind: spanner
+  #   project: your-gcp-project
+  #   instance: your-instance
+  #   database: your-database
+  #
+  # ── Neo4j ────────────────────────────────────────────────────────
+  # neo4j:
+  #   kind: neo4j
+  #   uri: bolt://localhost:7687
+  #   user: neo4j
+  #   password: your-password
+  #
+  # ── BigQuery ─────────────────────────────────────────────────────
+  # bigquery:
+  #   kind: bigquery
+  #   project: your-gcp-project
+  #   location: US
+
+tools: {}
+  # ── Spanner tools ────────────────────────────────────────────────
+  # spanner-execute-sql:
+  #   kind: spanner-execute-sql
+  #   source: spanner
+  #   description: Execute SQL queries on Google Cloud Spanner (supports GRAPH_TABLE for property graph queries)
+  # spanner-list-tables:
+  #   kind: spanner-list-tables
+  #   source: spanner
+  #   description: List tables in Spanner database
+  # spanner-list-graphs:
+  #   kind: spanner-list-graphs
+  #   source: spanner
+  #   description: List property graphs in Spanner database
+  # spanner-query-graph:
+  #   kind: spanner-sql
+  #   source: spanner
+  #   description: Query property graph "graph_view" using GRAPH_TABLE() syntax in Spanner
+  #   statement: SELECT * FROM GRAPH_TABLE(graph_view MATCH -[e]-> RETURN e LIMIT 100)
+  #
+  # ── Neo4j tools ──────────────────────────────────────────────────
+  # neo4j-execute-cypher:
+  #   kind: neo4j-execute-cypher
+  #   source: neo4j
+  #   description: Execute Cypher queries on Neo4j graph database
+  # neo4j-schema:
+  #   kind: neo4j-schema
+  #   source: neo4j
+  #   description: Extract schema from Neo4j database
