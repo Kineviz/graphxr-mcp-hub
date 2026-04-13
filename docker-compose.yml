@@ -12,6 +12,27 @@
 #   docker compose -f docker-compose.yml up -d
 
 services:
+  # 一次性初始化容器：在任何服务启动前确保 ./config/tools.yaml 以「文件」形式存在。
+  # 背景：genai-toolbox 需要读取 tools.yaml。若使用单文件 bind mount
+  # (./config/tools.yaml:/app/tools.yaml) 且宿主机上该路径不存在，Docker 会
+  # 默认把它当成目录自动创建，导致 toolbox 读到的是目录而非文件，持续崩溃循环。
+  # 这里改用目录挂载 + 初始化容器兜底，无需用户手动预创建任何文件。
+  config-init:
+    image: busybox:latest
+    volumes:
+      - ./config:/config
+    command:
+      - sh
+      - -c
+      - |
+        if [ ! -f /config/tools.yaml ]; then
+          printf 'sources: {}\ntools: {}\n' > /config/tools.yaml
+          echo "[config-init] Created empty /config/tools.yaml"
+        else
+          echo "[config-init] /config/tools.yaml already exists"
+        fi
+    restart: "no"
+
   graphxr-mcp-server:
     image: kineviz/graphxr-mcp-server:latest
     ports:
@@ -30,6 +51,8 @@ services:
       # 共享宿主机 gcloud ADC 凭证 (与 genai-toolbox 服务相同)
       - ${CLOUDSDK_CONFIG:-${APPDATA:-${HOME}/.config}/gcloud}:/gcp/gcloud:ro
     depends_on:
+      config-init:
+        condition: service_completed_successfully
       genai-toolbox:
         condition: service_started
     healthcheck:
@@ -44,13 +67,17 @@ services:
     image: us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:latest
     ports:
       - "5000:5000"
+    depends_on:
+      config-init:
+        condition: service_completed_successfully
     volumes:
-      - ./config/tools.yaml:/app/tools.yaml:ro
+      # 目录挂载（而不是单文件），避免宿主机文件缺失时被 Docker 误建为目录
+      - ./config:/app/config:ro
       # 共享宿主机 gcloud ADC 凭证 (gcloud auth application-default login)
       # Windows: C:/Users/<user>/AppData/Roaming/gcloud
       # Linux/Mac: ~/.config/gcloud
       - ${CLOUDSDK_CONFIG:-${APPDATA:-${HOME}/.config}/gcloud}:/gcp/gcloud:ro
-    command: ["--config", "/app/tools.yaml", "--address", "0.0.0.0", "--port", "5000"]
+    command: ["--config", "/app/config/tools.yaml", "--address", "0.0.0.0", "--port", "5000"]
     environment:
       - CLOUDSDK_CONFIG=/gcp/gcloud
       - GOOGLE_APPLICATION_CREDENTIALS=/gcp/gcloud/application_default_credentials.json
